@@ -1,0 +1,323 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Asymptote",
+  "scopeName": "source.asy",
+  "fileTypes": [".asy"],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#latex-strings"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#path-operators"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#modifiers"
+    },
+    {
+      "include": "#permissions"
+    },
+    {
+      "include": "#builtin-types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#builtin-functions"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#identifiers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.asy",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": {
+            "0": {
+              "name": "punctuation.definition.comment.asy"
+            }
+          }
+        },
+        {
+          "name": "comment.line.double-slash.asy",
+          "begin": "//",
+          "end": "$",
+          "captures": {
+            "0": {
+              "name": "punctuation.definition.comment.asy"
+            }
+          }
+        }
+      ]
+    },
+    "latex-strings": {
+      "name": "string.quoted.double.latex.asy",
+      "begin": "\"",
+      "end": "\"(?:\\s*[\"'])?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.asy"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.asy"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.asy",
+          "match": "\\\\."
+        },
+        {
+          "name": "support.function.latex.asy",
+          "match": "\\\\(?:\\\\[a-zA-Z]+|\\\\[^a-zA-Z])"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.single.asy",
+      "begin": "'",
+      "end": "'(?:\\s*[\"'])?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.asy"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.asy"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.asy",
+          "match": "\\\\[abfnrtv?'\"\\\\]"
+        },
+        {
+          "name": "constant.character.escape.octal.asy",
+          "match": "\\\\[0-7]{1,3}"
+        },
+        {
+          "name": "constant.character.escape.hex.asy",
+          "match": "\\\\x[0-9A-Fa-f]{1,2}"
+        }
+      ]
+    },
+    "path-operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.path.join.asy",
+          "match": "\\.\\.(?![.])"
+        },
+        {
+          "name": "keyword.operator.path.dash.asy",
+          "match": "---"
+        },
+        {
+          "name": "keyword.operator.path.dash.asy",
+          "match": "--"
+        },
+        {
+          "name": "keyword.operator.path.colon.asy",
+          "match": "::"
+        },
+        {
+          "name": "keyword.control.flow.tension.asy",
+          "match": "\\b(tension|atleast|controls|curl|cycle)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.compound.asy",
+          "match": "[+\\-*/#%^]="
+        },
+        {
+          "name": "keyword.operator.comparison.asy",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.asy",
+          "match": "&&|\\|\\||\\^\\^|!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.asy",
+          "match": "[+\\-*/#%^]"
+        },
+        {
+          "name": "keyword.operator.assignment.asy",
+          "match": "=(?!=)"
+        },
+        {
+          "name": "keyword.operator.bitwise.asy",
+          "match": "[&|]"
+        },
+        {
+          "name": "keyword.operator.increment.asy",
+          "match": "\\+\\+"
+        },
+        {
+          "name": "keyword.operator.asy",
+          "match": "<<|>>|\\$\\$|@|~"
+        },
+        {
+          "name": "keyword.operator.ternary.asy",
+          "match": "\\?|:"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.asy",
+          "match": "\\b(if|else)\\b"
+        },
+        {
+          "name": "keyword.control.loop.asy",
+          "match": "\\b(while|for|do|break|continue)\\b"
+        },
+        {
+          "name": "keyword.control.asy",
+          "match": "\\b(return)\\b"
+        },
+        {
+          "name": "keyword.control.declaration.asy",
+          "match": "\\b(struct|typedef|using)\\b"
+        },
+        {
+          "name": "keyword.other.asy",
+          "match": "\\b(new|operator|this|explicit)\\b"
+        },
+        {
+          "name": "keyword.control.import.asy",
+          "match": "\\b(import|include|access|from|unravel|quote)\\b"
+        }
+      ]
+    },
+    "modifiers": {
+      "patterns": [
+        {
+          "name": "storage.modifier.asy",
+          "match": "\\b(static|autounravel)\\b"
+        }
+      ]
+    },
+    "permissions": {
+      "patterns": [
+        {
+          "name": "storage.modifier.access.asy",
+          "match": "\\b(public|private|restricted)\\b"
+        }
+      ]
+    },
+    "builtin-types": {
+      "patterns": [
+        {
+          "name": "storage.type.asy",
+          "match": "\\b(bool|int|real|string|void|pair|triple|transform|guide|path|path3|pen|frame|picture|file|code)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.asy",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.asy",
+          "match": "\\bnull\\b"
+        },
+        {
+          "name": "constant.language.asy",
+          "match": "\\b(pi|inf|infinity|nan|zero|VERSION|realEpsilon|realDigits|realMin|realMax|intMax|intMin|randMax)\\b"
+        },
+        {
+          "name": "constant.language.special.asy",
+          "match": "\\b(newframe|cycleToken|currentpen|currentpicture|defaultpen)\\b"
+        }
+      ]
+    },
+    "builtin-functions": {
+      "patterns": [
+        {
+          "name": "support.function.math.asy",
+          "match": "\\b(sin|cos|tan|asin|acos|atan|sinh|cosh|tanh|asinh|acosh|atanh|exp|log|log10|sqrt|cbrt|abs|fabs|expm1|log1p|ldexp|pow|pow10|floor|ceil|round|min|max|sum|interp|sort|search)\\b"
+        },
+        {
+          "name": "support.function.pair.asy",
+          "match": "\\b(xpart|ypart|length|angle|degrees|radians|conj|dot|cross|unit|polar|dir)\\b"
+        },
+        {
+          "name": "support.function.drawing.asy",
+          "match": "\\b(draw|fill|filldraw|label|clip|shipout|add|erase|dot|undraw|unfill|size|unitsize|scale|newpage|save|restore|layer)\\b"
+        },
+        {
+          "name": "support.function.transform.asy",
+          "match": "\\b(scale|rotate|shift|reflect|slant|inverse|identity|zeroTransform|transpose)\\b"
+        },
+        {
+          "name": "support.function.array.asy",
+          "match": "\\b(array|copy|map|sequence|concat|alias|initialized|delete|push|pop|append|insert)\\b"
+        },
+        {
+          "name": "support.function.string.asy",
+          "match": "\\b(substr|find|rfind|replace|split|join|format|hex|rjust|ljust)\\b"
+        },
+        {
+          "name": "support.function.io.asy",
+          "match": "\\b(write|read|input|output|eof|eol|error|warning|nowarn|exit)\\b"
+        },
+        {
+          "name": "support.function.interactive.asy",
+          "match": "\\b(printBytecode|atexit|atupdate|atbreak|compile|eval|_eval)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.asy",
+          "match": "(?:[0-9]*\\.[0-9]+|[0-9]+\\.[0-9]*|[0-9]+(?:\\.[0-9]*)?e[-+]?[0-9]+)"
+        },
+        {
+          "name": "constant.numeric.integer.asy",
+          "match": "[0-9]+"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "entity.name.function.asy",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()"
+        },
+        {
+          "name": "variable.other.asy",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

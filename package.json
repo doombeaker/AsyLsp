@@ -1,0 +1,104 @@
+{
+  "name": "asymptote-lsp",
+  "displayName": "Asymptote Language Support",
+  "description": "LSP-based Asymptote language support with syntax highlighting, code completion, signature help, go-to-definition, and formatting",
+  "version": "0.1.0",
+  "publisher": "asy-lsp",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters"
+  ],
+  "keywords": [
+    "asymptote",
+    "asy",
+    "vector graphics",
+    "lsp"
+  ],
+  "activationEvents": [
+    "onLanguage:asymptote"
+  ],
+  "main": "./client/out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "asymptote",
+        "aliases": [
+          "Asymptote",
+          "asy"
+        ],
+        "extensions": [
+          ".asy"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "asymptote",
+        "scopeName": "source.asy",
+        "path": "./syntaxes/asymptote.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Asymptote",
+      "properties": {
+        "asymptote.trace.server": {
+          "type": "string",
+          "scope": "window",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the Asymptote language server."
+        },
+        "asymptote.asyPath": {
+          "type": "string",
+          "default": "asy",
+          "description": "Path to the Asymptote (asy) executable. Used to discover the standard library path."
+        },
+        "asymptote.formatting.braceStyle": {
+          "type": "string",
+          "enum": [
+            "kr",
+            "allman"
+          ],
+          "default": "kr",
+          "description": "Brace style for formatting. 'kr' places opening brace on the same line, 'allman' on a new line."
+        },
+        "asymptote.formatting.indentSize": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Number of spaces for indentation."
+        },
+        "asymptote.formatting.insertSpaces": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use spaces instead of tabs for indentation."
+        },
+        "asymptote.formatting.pathExpressionSpacing": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "spaced"
+          ],
+          "default": "spaced",
+          "description": "Spacing around path expression operators (.., --, ---, :). 'compact' removes spaces, 'spaced' adds spaces."
+        }
+      }
+    },
+    "snippets": [
+      {
+        "language": "asymptote",
+        "path": "./snippets/asymptote.json"
+      }
+    ]
+  }
+}

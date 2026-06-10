@@ -1,0 +1,97 @@
+{
+  "import": {
+    "prefix": "import",
+    "body": ["import ${1:module};", "$0"],
+    "description": "Import a module"
+  },
+  "import-as": {
+    "prefix": "import",
+    "body": ["import ${1:module} as ${2:alias};", "$0"],
+    "description": "Import a module with alias"
+  },
+  "include": {
+    "prefix": "include",
+    "body": ["include \"${1:file}\";", "$0"],
+    "description": "Include a file"
+  },
+  "access": {
+    "prefix": "access",
+    "body": ["access ${1:module};", "$0"],
+    "description": "Access a module"
+  },
+  "from-access": {
+    "prefix": "from",
+    "body": ["from ${1:module} access ${2:name};", "$0"],
+    "description": "Access symbols from a module"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Name} {", "\t${2:members}", "}", "$0"],
+    "description": "Struct definition"
+  },
+  "for": {
+    "prefix": "for",
+    "body": ["for (${1:int} ${2:i} = 0; ${2:i} < ${3:n}; ++${2:i}) {", "\t$0", "}"],
+    "description": "For loop"
+  },
+  "for-each": {
+    "prefix": "for",
+    "body": ["for (${1:type} ${2:var} : ${3:array}) {", "\t$0", "}"],
+    "description": "For-each loop"
+  },
+  "if": {
+    "prefix": "if",
+    "body": ["if (${1:condition}) {", "\t$0", "}"],
+    "description": "If statement"
+  },
+  "if-else": {
+    "prefix": "if",
+    "body": ["if (${1:condition}) {", "\t$2", "} else {", "\t$3", "}"],
+    "description": "If-else statement"
+  },
+  "while": {
+    "prefix": "while",
+    "body": ["while (${1:condition}) {", "\t$0", "}"],
+    "description": "While loop"
+  },
+  "do-while": {
+    "prefix": "do",
+    "body": ["do {", "\t$1", "} while (${2:condition});"],
+    "description": "Do-while loop"
+  },
+  "draw": {
+    "prefix": "draw",
+    "body": ["draw(${1:path/image}${2:, pen});"],
+    "description": "Draw a path or image"
+  },
+  "fill": {
+    "prefix": "fill",
+    "body": ["fill(${1:path}${2:, pen});"],
+    "description": "Fill a path"
+  },
+  "label": {
+    "prefix": "label",
+    "body": ["label(\"${1:text}\", ${2:position}${3:, align});"],
+    "description": "Add a label"
+  },
+  "dot": {
+    "prefix": "dot",
+    "body": ["dot(${1:pair}${2:, pen});"],
+    "description": "Draw a dot"
+  },
+  "size": {
+    "prefix": "size",
+    "body": ["size(${1:width}, ${2:height}${3:, keepAspect});"],
+    "description": "Set picture size"
+  },
+  "unitsize": {
+    "prefix": "unitsize",
+    "body": ["unitsize(${1:x}${2:, y});"],
+    "description": "Set unit size"
+  },
+  "pair": {
+    "prefix": "pair",
+    "body": ["pair ${1:name} = (${2:x}, ${3:y});"],
+    "description": "Declare a pair variable"
+  }
+}
