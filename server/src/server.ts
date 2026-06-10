@@ -161,12 +161,10 @@ connection.onInitialize((params: InitializeParams) => {
 });
 
 connection.onInitialized(() => {
-  if (hasConfigurationCapability) {
-    connection.client.register(
-      DidChangeConfigurationNotification.type,
-      undefined
-    );
-  }
+  connection.client.register(
+    DidChangeConfigurationNotification.type,
+    undefined
+  );
   if (hasWorkspaceFolderCapability) {
     connection.workspace.onDidChangeWorkspaceFolders((event) => {
       for (const removed of event.removed) {
@@ -190,6 +188,7 @@ connection.onDidChangeConfiguration((change) => {
   if (asySettings.searchPaths !== undefined) {
     globalSettings.searchPaths = asySettings.searchPaths;
     cachedSearchPathHash = "";
+    cachedPlainHash = "";
   }
   if (asySettings.asyPath !== undefined) {
     globalSettings.asyPath = asySettings.asyPath;
@@ -202,13 +201,40 @@ connection.onDidChangeConfiguration((change) => {
   }
 });
 
+async function refreshGlobalSettings(): Promise<void> {
+  try {
+    const fresh = await connection.workspace.getConfiguration("asymptote");
+    if (fresh === null || fresh === undefined) return;
+    const s = fresh as Partial<AsymptoteSettings>;
+    let changed = false;
+    if (s.searchPaths !== undefined && !arraysEqual(s.searchPaths, globalSettings.searchPaths)) {
+      globalSettings.searchPaths = s.searchPaths;
+      cachedSearchPathHash = "";
+      cachedPlainHash = "";
+      changed = true;
+    }
+    if (s.asyPath !== undefined && s.asyPath !== globalSettings.asyPath) {
+      globalSettings.asyPath = s.asyPath;
+      changed = true;
+    }
+    if (s.formatting !== undefined) {
+      Object.assign(globalSettings.formatting, s.formatting);
+    }
+  } catch { /* pull failed, keep using cached */ }
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 documents.onDidClose((e) => {
   documentSettings.delete(e.document.uri);
 });
 
 // ========== HOVER PROVIDER ==========
 
-connection.onHover((params) => {
+connection.onHover(async (params) => {
+  await refreshGlobalSettings();
   const document = documents.get(params.textDocument.uri);
   if (!document) return null;
 
@@ -371,7 +397,8 @@ connection.onSignatureHelp((params) => {
 
 // ========== DEFINITION PROVIDER ==========
 
-connection.onDefinition((params) => {
+connection.onDefinition(async (params) => {
+  await refreshGlobalSettings();
   const document = documents.get(params.textDocument.uri);
   if (!document) return null;
 
