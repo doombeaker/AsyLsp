@@ -24,6 +24,9 @@ import {
   Position,
   TextEdit,
   FormattingOptions,
+  SemanticTokensBuilder,
+  SemanticTokens,
+  SemanticTokensRequest,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
@@ -146,6 +149,24 @@ connection.onInitialize((params: InitializeParams) => {
       definitionProvider: true,
       documentFormattingProvider: true,
       hoverProvider: true,
+      semanticTokensProvider: {
+        legend: {
+          tokenTypes: [
+            "keyword",
+            "type",
+            "function",
+            "parameter",
+            "variable",
+            "namespace",
+            "comment",
+            "string",
+            "number",
+            "operator",
+          ],
+          tokenModifiers: ["declaration", "readonly", "defaultLibrary"],
+        },
+        full: true,
+      },
     },
   };
 
@@ -439,6 +460,215 @@ connection.onDocumentFormatting((params) => {
 
   return formatDocument(document, params.options);
 });
+
+// ========== SEMANTIC TOKENS PROVIDER ==========
+
+const TOKEN_KEYWORD = 0;
+const TOKEN_TYPE = 1;
+const TOKEN_FUNCTION = 2;
+const TOKEN_PARAMETER = 3;
+const TOKEN_VARIABLE = 4;
+const TOKEN_NAMESPACE = 5;
+const TOKEN_COMMENT = 6;
+const TOKEN_STRING = 7;
+const TOKEN_NUMBER = 8;
+const TOKEN_OPERATOR = 9;
+
+const MOD_DECLARATION = 1 << 0;
+const MOD_READONLY = 1 << 1;
+const MOD_DEFAULTLIB = 1 << 2;
+
+connection.onRequest(SemanticTokensRequest.type, (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return { data: [] };
+  const builder = new SemanticTokensBuilder();
+  tokenizeSemantic(document, builder);
+  return builder.build();
+});
+
+function collectDefinitions(document: TextDocument): {
+  structs: Set<string>;
+  functions: Set<string>;
+  params: Set<string>;
+} {
+  const text = document.getText();
+  const structs = new Set<string>();
+  const functions = new Set<string>();
+  const params = new Set<string>();
+  const keywordSet = new Set(keywords);
+  const builtinTypeSet = new Set(builtinTypes.map((t) => t.label));
+
+  const structRegex = /struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+  let sm: RegExpExecArray | null;
+  while ((sm = structRegex.exec(text)) !== null) {
+    structs.add(sm[1]);
+  }
+
+  const funcRegex = /\b([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let fm: RegExpExecArray | null;
+  while ((fm = funcRegex.exec(text)) !== null) {
+    const retType = fm[1];
+    const funcName = fm[2];
+    if (!keywordSet.has(retType) || retType === "struct" || retType === "typedef") continue;
+    if (retType === "void" || builtinTypeSet.has(retType) || /^[A-Z]/.test(retType)) {
+      functions.add(funcName);
+      const openParen = fm.index + fm[0].length;
+      let depth = 0;
+      let closeParen = -1;
+      for (let j = openParen; j < text.length; j++) {
+        if (text[j] === "(") { depth++; }
+        else if (text[j] === ")") {
+          if (depth === 0) { closeParen = j; break; }
+          depth--;
+        }
+      }
+      if (closeParen > openParen) {
+        const paramStr = text.substring(openParen, closeParen);
+        for (const part of paramStr.split(",")) {
+          const words = part.trim().split(/\s+/);
+          for (let w = 0; w < words.length - 1; w++) {
+            if (builtinTypeSet.has(words[w]) || structs.has(words[w]) || /^[A-Z]/.test(words[w])) {
+              const paramName = words[w + 1].replace(/=.*$/, "");
+              if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(paramName)) {
+                params.add(paramName);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { structs, functions, params };
+}
+
+function tokenizeSemantic(
+  document: TextDocument,
+  builder: SemanticTokensBuilder
+): void {
+  const defs = collectDefinitions(document);
+  const text = document.getText();
+  const len = text.length;
+  let i = 0;
+  let line = 0;
+  let char = 0;
+  const keywordSet = new Set(keywords);
+  const builtinTypeSet = new Set(builtinTypes.map((t) => t.label));
+  const constantSet = new Set(constants.map((c) => c.label));
+  const builtinFuncSet = new Set(builtinFunctions.map((f) => f.label));
+
+  const addToken = (
+    tl: number, tc: number, tlen: number,
+    tt: number, mods: number
+  ) => builder.push(tl, tc, tlen, tt, mods);
+
+  while (i < len) {
+    while (i < len && (text[i] === " " || text[i] === "\t" || text[i] === "\r")) {
+      char++; i++;
+    }
+    while (i < len && text[i] === "\n") { line++; char = 0; i++; }
+    if (i >= len) break;
+
+    const c = text[i];
+    const cl = line;
+    const cc = char;
+
+    if (c === "/" && i + 1 < len && text[i + 1] === "/") {
+      const startC = cc;
+      i += 2; char += 2;
+      while (i < len && text[i] !== "\n") { char++; i++; }
+      addToken(cl, startC, char - startC, TOKEN_COMMENT, 0);
+      continue;
+    }
+
+    if (c === "/" && i + 1 < len && text[i + 1] === "*") {
+      const startC = cc;
+      i += 2; char += 2;
+      while (i < len - 1 && !(text[i] === "*" && text[i + 1] === "/")) {
+        if (text[i] === "\n") { line++; char = 0; }
+        else char++;
+        i++;
+      }
+      if (i < len - 1) { i += 2; char += 2; }
+      else { i = len; }
+      addToken(cl, startC, 2 + (i - cl > 0 ? i - (cl > 0 ? 0 : 0) : 0), TOKEN_COMMENT, 0);
+      continue;
+    }
+
+    if (c === "\"" || c === "'") {
+      const delim = c;
+      const startC = cc;
+      i++; char++;
+      while (i < len && text[i] !== delim) {
+        if (text[i] === "\\") { char += 2; i += 2; }
+        else if (text[i] === "\n") { line++; char = 0; i++; }
+        else { char++; i++; }
+      }
+      if (i < len) { i++; char++; }
+      addToken(cl, startC, i - (cl * 0 + startC), TOKEN_STRING, 0);
+      continue;
+    }
+
+    if (/[0-9]/.test(c) || (c === "." && i + 1 < len && /[0-9]/.test(text[i + 1]))) {
+      const startC = cc;
+      while (i < len && /[0-9.eE+\-]/.test(text[i])) { char++; i++; }
+      addToken(cl, startC, char - startC, TOKEN_NUMBER, 0);
+      continue;
+    }
+
+    if (/[{}\[\]();,:.<>=+\-*\/#%^!&|?~@$\\]/.test(c)) {
+      let opLen = 1;
+      const c2 = i + 1 < len ? text[i + 1] : "";
+      const c3 = i + 2 < len ? text[i + 2] : "";
+      if (c === "." && c2 === ".") { opLen = c3 === "." ? 3 : 2; }
+      else if (c === "-" && c2 === "-") { opLen = c3 === "-" ? 3 : 2; }
+      else if (c === ":" && c2 === ":") opLen = 2;
+      else if ((c === "=" || c === "!" || c === "<" || c === ">") && c2 === "=") opLen = 2;
+      else if (c === "&" && c2 === "&") opLen = 2;
+      else if (c === "|" && c2 === "|") opLen = 2;
+      else if ((c === "+" || c === "-") && c2 === c) opLen = 2;
+      char += opLen; i += opLen;
+      addToken(cl, cc, opLen, TOKEN_OPERATOR, 0);
+      continue;
+    }
+
+    if (/[A-Za-z_]/.test(c)) {
+      const startC = cc;
+      let word = "";
+      while (i < len && /[A-Za-z0-9_]/.test(text[i])) {
+        word += text[i]; char++; i++;
+      }
+      const wlen = word.length;
+      let tt = TOKEN_VARIABLE;
+      let mods = 0;
+
+      if (keywordSet.has(word)) {
+        tt = TOKEN_KEYWORD;
+      } else if (builtinTypeSet.has(word)) {
+        tt = TOKEN_TYPE;
+        mods = MOD_DEFAULTLIB;
+      } else if (constantSet.has(word)) {
+        tt = TOKEN_VARIABLE;
+        mods = MOD_READONLY | MOD_DEFAULTLIB;
+      } else if (builtinFuncSet.has(word)) {
+        tt = TOKEN_FUNCTION;
+        mods = MOD_DEFAULTLIB;
+      } else if (defs.structs.has(word)) {
+        tt = TOKEN_TYPE;
+        mods = MOD_DECLARATION;
+      } else if (defs.functions.has(word)) {
+        tt = TOKEN_FUNCTION;
+      } else if (defs.params.has(word)) {
+        tt = TOKEN_PARAMETER;
+      }
+
+      addToken(cl, startC, wlen, tt, mods);
+      continue;
+    }
+
+    char++; i++;
+  }
+}
 
 // Make the text document manager listen on the connection
 // for open, change, and close text document events
