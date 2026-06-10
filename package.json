@@ -23,6 +23,16 @@
   ],
   "main": "./client/out/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "asymptote.compile",
+        "title": "Asymptote: Compile"
+      },
+      {
+        "command": "asymptote.preview",
+        "title": "Asymptote: Preview"
+      }
+    ],
     "languages": [
       {
         "id": "asymptote",
@@ -99,6 +109,40 @@
           ],
           "default": "spaced",
           "description": "Spacing around path expression operators (.., --, ---, :). 'compact' removes spaces, 'spaced' adds spaces."
+        },
+        "asymptote.compile.outputFormat": {
+          "type": "string",
+          "enum": ["svg", "pdf", "png"],
+          "default": "svg",
+          "description": "Output format for compilation. SVG is recommended for inline preview."
+        },
+        "asymptote.compile.render": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Raster render resolution in pixels per bp (PNG only). Higher values produce sharper PNG output but increase file size and compile time. SVG and PDF are vector formats and ignore this setting. Recommended range: 4–8."
+        },
+        "asymptote.compile.outputDir": {
+          "type": "string",
+          "default": "",
+          "description": "Output directory for compiled files. Leave empty to use the same directory as the source file."
+        },
+        "asymptote.compile.autoCompile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically compile on save."
+        },
+        "asymptote.compile.extraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra command-line arguments to pass to asy (e.g., ['-render=4'])."
+        },
+        "asymptote.compile.openPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open preview after successful compilation."
         }
       }
     },
