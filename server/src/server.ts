@@ -1,3 +1,8 @@
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import { fileURLToPath } from "url";
+
 import {
   createConnection,
   TextDocuments,
@@ -48,9 +53,12 @@ let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
 let hasDiagnosticRelatedInformationCapability = false;
 
+let workspaceFolders: string[] = [];
+
 // Configuration
 interface AsymptoteSettings {
   asyPath: string;
+  searchPaths: string[];
   formatting: {
     braceStyle: "kr" | "allman";
     indentSize: number;
@@ -61,6 +69,7 @@ interface AsymptoteSettings {
 
 const defaultSettings: AsymptoteSettings = {
   asyPath: "asy",
+  searchPaths: [],
   formatting: {
     braceStyle: "kr",
     indentSize: 2,
@@ -104,6 +113,25 @@ connection.onInitialize((params: InitializeParams) => {
     capabilities.textDocument.publishDiagnostics.relatedInformation
   );
 
+  if (params.workspaceFolders) {
+    workspaceFolders = params.workspaceFolders.map((f) =>
+      fileURLToPath(f.uri)
+    );
+  }
+
+  const initOptions = params.initializationOptions as Partial<AsymptoteSettings> | undefined;
+  if (initOptions) {
+    if (initOptions.asyPath !== undefined) {
+      globalSettings.asyPath = initOptions.asyPath;
+    }
+    if (initOptions.searchPaths !== undefined) {
+      globalSettings.searchPaths = initOptions.searchPaths;
+    }
+    if (initOptions.formatting) {
+      Object.assign(globalSettings.formatting, initOptions.formatting);
+    }
+  }
+
   const result: InitializeResult = {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -140,8 +168,17 @@ connection.onInitialized(() => {
     );
   }
   if (hasWorkspaceFolderCapability) {
-    connection.workspace.onDidChangeWorkspaceFolders((_event) => {
-      connection.console.log("Workspace folder change received.");
+    connection.workspace.onDidChangeWorkspaceFolders((event) => {
+      for (const removed of event.removed) {
+        const p = fileURLToPath(removed.uri);
+        workspaceFolders = workspaceFolders.filter((f) => f !== p);
+      }
+      for (const added of event.added) {
+        const p = fileURLToPath(added.uri);
+        if (!workspaceFolders.includes(p)) {
+          workspaceFolders.push(p);
+        }
+      }
     });
   }
 });
@@ -149,12 +186,19 @@ connection.onInitialized(() => {
 // ========== CONFIGURATION CHANGE ==========
 
 connection.onDidChangeConfiguration((change) => {
+  const asySettings = (change.settings.asymptote || {}) as Partial<AsymptoteSettings>;
+  if (asySettings.searchPaths !== undefined) {
+    globalSettings.searchPaths = asySettings.searchPaths;
+    cachedSearchPathHash = "";
+  }
+  if (asySettings.asyPath !== undefined) {
+    globalSettings.asyPath = asySettings.asyPath;
+  }
+  if (asySettings.formatting !== undefined) {
+    Object.assign(globalSettings.formatting, asySettings.formatting);
+  }
   if (hasConfigurationCapability) {
     documentSettings.clear();
-  } else {
-    globalSettings = <AsymptoteSettings>(
-      (change.settings.asymptote || defaultSettings)
-    );
   }
 });
 
@@ -222,6 +266,21 @@ connection.onHover((params) => {
       contents: {
         kind: MarkupKind.Markdown,
         value: md,
+      },
+    };
+  }
+
+  const importedDefs = collectAllDefinitions(word, document);
+  if (importedDefs.length > 0) {
+    const firstUri = importedDefs[0].uri;
+    const firstPath = fileURLToPath(firstUri);
+    const moduleName = path.basename(firstPath, ".asy");
+    const count = importedDefs.length;
+    const overloadNote = count > 1 ? ` (${count} overload${count > 1 ? "s" : ""})` : "";
+    return {
+      contents: {
+        kind: MarkupKind.Markdown,
+        value: `**${word}** - defined in \`${moduleName}.asy\`${overloadNote}\n\n*Press F12 to jump to definition*`,
       },
     };
   }
@@ -326,8 +385,23 @@ connection.onDefinition((params) => {
     return resolveImportPath(importPath, document);
   }
 
-  // Check for symbol definition
-  return findSymbolDefinition(document, params.position);
+  const currentFileDef = findSymbolDefinition(document, params.position);
+  if (currentFileDef) return currentFileDef;
+
+  const wordRange = getWordRangeAtPosition(document, params.position);
+  if (!wordRange) return null;
+  const word = document.getText(wordRange);
+
+  const dotAccess = getDotAccessTarget(lineText, params.position);
+  if (dotAccess) {
+    const dotResult = resolveDotAccess(dotAccess.objectName, dotAccess.symbolName, document);
+    if (dotResult) return dotResult;
+  }
+
+  const allDefs = collectAllDefinitions(word, document);
+  if (allDefs.length > 0) return allDefs;
+
+  return null;
 });
 
 // ========== FORMATTING PROVIDER ==========
@@ -351,7 +425,7 @@ connection.listen();
 function getLineText(document: TextDocument, line: number): string {
   const lineRange = {
     start: { line, character: 0 },
-    end: { line, character: document.getText().split("\n")[line]?.length || 0 },
+    end: { line, character: document.getText().split("n")[line]?.length || 0 },
   };
   const rangeStr = `${lineRange.start.line}:${lineRange.start.character}-${lineRange.end.line}:${lineRange.end.character}`;
   return document.getText({
@@ -479,14 +553,6 @@ function getAllCompletions(): CompletionItem[] {
   return items;
 }
 
-function getModuleCompletions(): CompletionItem[] {
-  return standardLibraryModules.map((mod) => ({
-    label: mod.name,
-    kind: CompletionItemKind.Module,
-    detail: `${mod.name} - ${mod.description}`,
-  }));
-}
-
 function getMemberCompletions(text: string, offset: number): CompletionItem[] {
   // Get the word before the dot
   const beforeDot = text.substring(0, offset - 1);
@@ -591,58 +657,6 @@ function getImportPath(lineText: string): string | null {
   return null;
 }
 
-function resolveImportPath(
-  importPath: string,
-  document: TextDocument
-): Definition | null {
-  const asyDir = globalSettings.asyPath
-    ? getAsyDir(globalSettings.asyPath)
-    : "/usr/share/asymptote";
-
-  // Build candidate paths
-  const candidates: string[] = [];
-
-  // 1. Standard library path: $ASYDIR/base/
-  if (!importPath.includes(".")) {
-    // It's a module name like "graph" or "geometry"
-    const mod = standardLibraryModules.find(
-      (m) => m.name === importPath
-    );
-    if (mod) {
-      candidates.push(`${asyDir}/base/${mod.filename}`);
-    } else {
-      // Try adding .asy extension
-      candidates.push(`${asyDir}/base/${importPath}.asy`);
-    }
-    // Also try just the module name as a file
-    candidates.push(`${asyDir}/base/${importPath}.asy`);
-  }
-
-  // 2. Relative to current file
-  const currentDir = document.uri.replace(/\/[^/]*$/, "");
-  candidates.push(`${currentDir}/${importPath}.asy`);
-  candidates.push(`${currentDir}/${importPath}`);
-
-  // 3. Workspace path
-  // (Simplified - just try relative paths)
-
-  // Return first matching candidate
-  // Since we can't check file existence from LSP easily, we return the first
-  // candidate path as a definition location (the client will handle URI resolution)
-  for (const candidate of candidates) {
-    // Return as a definition location pointing to file beginning
-    return {
-      uri: `file://${candidate}`,
-      range: {
-        start: { line: 0, character: 0 },
-        end: { line: 0, character: 0 },
-      },
-    };
-  }
-
-  return null;
-}
-
 function findSymbolDefinition(
   document: TextDocument,
   position: Position
@@ -709,6 +723,186 @@ function findSymbolDefinition(
   return null;
 }
 
+function resolveModuleFile(
+  moduleName: string,
+  document: TextDocument
+): string | null {
+  const searchPath = buildSearchPath(document);
+  const candidates = [
+    moduleName.replace(/\./g, "/") + ".asy",
+    moduleName.replace(/\./g, "/"),
+    moduleName + ".asy",
+    moduleName,
+  ];
+
+  for (const dir of searchPath) {
+    for (const candidate of candidates) {
+      const fullPath = path.join(dir, candidate);
+      if (fs.existsSync(fullPath)) {
+        return fullPath;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getDocumentImports(document: TextDocument): string[] {
+  const text = document.getText();
+  const modules = new Set<string>();
+  const importRegex = /^(?:import|access)\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\b/gm;
+  const fromRegex = /^from\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s+access\b/gm;
+
+  let match: RegExpExecArray | null;
+  while ((match = importRegex.exec(text)) !== null) {
+    modules.add(match[1]);
+  }
+  while ((match = fromRegex.exec(text)) !== null) {
+    modules.add(match[1]);
+  }
+
+  modules.add("plain");
+  for (const m of scanPlainModules(document)) {
+    modules.add(m);
+  }
+
+  return Array.from(modules);
+}
+
+let cachedPlainModules: string[] = [];
+let cachedPlainHash: string = "";
+
+function scanPlainModules(document: TextDocument): string[] {
+  const searchPath = buildSearchPath(document);
+  const hash = searchPath.join(":");
+  if (hash === cachedPlainHash) return cachedPlainModules;
+
+  cachedPlainHash = hash;
+  cachedPlainModules = [];
+  const seen = new Set<string>();
+
+  for (const dir of searchPath) {
+    for (const candidate of [dir, path.join(dir, "base")]) {
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        for (const entry of fs.readdirSync(candidate, { withFileTypes: true })) {
+          if (!entry.isFile()) continue;
+          if (!entry.name.startsWith("plain_") || !entry.name.endsWith(".asy")) continue;
+          const moduleName = entry.name.slice(0, -4);
+          if (!seen.has(moduleName)) {
+            seen.add(moduleName);
+            cachedPlainModules.push(moduleName);
+          }
+        }
+      } catch { /* skip unreadable */ }
+    }
+  }
+
+  return cachedPlainModules;
+}
+
+function findSymbolInFile(
+  filePath: string,
+  symbolName: string
+): Location[] {
+  if (!fs.existsSync(filePath)) return [];
+
+  const fileUrl = filePath.startsWith("/")
+    ? `file://${filePath}`
+    : `file:///${filePath}`;
+
+  let fileContent: string;
+  try {
+    fileContent = fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const escaped = escapeRegex(symbolName);
+  const results: Location[] = [];
+
+  const structRegex = new RegExp(`struct\\s+(${escaped})\\b`, "g");
+  let structMatch: RegExpExecArray | null;
+  while ((structMatch = structRegex.exec(fileContent)) !== null) {
+    const nameStartInMatch = structMatch[0].indexOf(structMatch[1]);
+    const offset = structMatch.index + nameStartInMatch;
+    const line = fileContent.substring(0, offset).split("\n").length - 1;
+    results.push({
+      uri: fileUrl,
+      range: {
+        start: { line, character: 0 },
+        end: { line, character: 0 },
+      },
+    });
+  }
+  if (results.length > 0) return results;
+
+  const declRegex = new RegExp(
+    `\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)\\s+(${escaped})\\b`,
+    "g"
+  );
+  let declMatch: RegExpExecArray | null;
+  while ((declMatch = declRegex.exec(fileContent)) !== null) {
+    const fullMatch = declMatch[0];
+    const matchedSymbol = declMatch[2];
+    const symbolOffset = declMatch.index + fullMatch.lastIndexOf(matchedSymbol);
+    const line = fileContent.substring(0, symbolOffset).split("\n").length - 1;
+    const charPos = symbolOffset - fileContent.lastIndexOf("\n", symbolOffset - 1) - 1;
+    results.push({
+      uri: fileUrl,
+      range: {
+        start: { line, character: charPos },
+        end: { line, character: charPos + symbolName.length },
+      },
+    });
+  }
+
+  return results;
+}
+
+function getDotAccessTarget(
+  lineText: string,
+  position: Position
+): { objectName: string; symbolName: string } | null {
+  const trimmed = lineText.trim();
+  const dotMatch = trimmed.match(
+    /([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/
+  );
+  if (!dotMatch) return null;
+
+  const methodName = dotMatch[2];
+  const leadingWs = lineText.length - trimmed.length;
+  const fullExpr = dotMatch[0];
+  const exprStart = leadingWs + trimmed.indexOf(fullExpr);
+  const methodStart = exprStart + fullExpr.lastIndexOf(methodName);
+  const methodEnd = methodStart + methodName.length;
+  if (position.character < methodStart || position.character > methodEnd) return null;
+
+  return { objectName: dotMatch[1].split(".")[0], symbolName: methodName };
+}
+
+function resolveDotAccess(
+  objectName: string,
+  symbolName: string,
+  document: TextDocument
+): Location[] | null {
+  const modulePath = resolveModuleFile(objectName, document);
+  if (!modulePath) return null;
+  const results = findSymbolInFile(modulePath, symbolName);
+  return results.length > 0 ? results : null;
+}
+
+function collectAllDefinitions(word: string, document: TextDocument): Location[] {
+  const results: Location[] = [];
+  const importedModules = getDocumentImports(document);
+  for (const moduleName of importedModules) {
+    const moduleFile = resolveModuleFile(moduleName, document);
+    if (!moduleFile) continue;
+    results.push(...findSymbolInFile(moduleFile, word));
+  }
+  return results;
+}
+
 // ========== FORMATTING HELPERS ==========
 
 function formatDocument(
@@ -720,7 +914,7 @@ function formatDocument(
   const edits: TextEdit[] = [];
 
   let formatted = "";
-  const lines = text.split("\n");
+  const lines = text.split("n");
   let indentLevel = 0;
   const indentStr = settings.insertSpaces
     ? " ".repeat(settings.indentSize)
@@ -808,16 +1002,177 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function getAsyDir(asyPath: string): string {
-  // Default standard library paths
-  // The actual discovery would involve running `asy --version` or similar
-  // For now, use known default paths
-  const defaultPaths = [
-    "/usr/share/asymptote",
-    "/usr/local/share/asymptote",
-    "/opt/asymptote",
-  ];
+function expandPath(raw: string): string {
+  let expanded = raw.replace(/^~(?=$|\/|\\)/g, os.homedir());
+  expanded = expanded.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] || "");
+  expanded = expanded.replace(/\$(\w+)/g, (_, name) => process.env[name] || "");
+  return path.resolve(expanded);
+}
 
-  // In the future, could run: asy --help or check env var ASYMPTOTE_DIR
-  return process.env.ASYMPTOTE_DIR || defaultPaths[0];
+function buildSearchPath(document: TextDocument): string[] {
+  const paths: string[] = [];
+
+  for (const ws of workspaceFolders) {
+    paths.push(ws);
+  }
+
+  for (const sp of globalSettings.searchPaths) {
+    paths.push(expandPath(sp));
+  }
+
+  const asyHome = process.env.ASYMPTOTE_HOME || path.join(os.homedir(), ".asy");
+  if (fs.existsSync(asyHome)) {
+    paths.push(asyHome);
+  }
+
+  const filePath = fileURLToPath(document.uri);
+  paths.push(path.dirname(filePath));
+
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const p of paths) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      unique.push(p);
+    }
+  }
+  return unique;
+}
+
+function createFileLocation(filePath: string): Definition {
+  const href = filePath.startsWith("/")
+    ? `file://${filePath}`
+    : `file:///${filePath}`;
+  return {
+    uri: href,
+    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+  };
+}
+
+function resolveImportPath(
+  importPath: string,
+  document: TextDocument
+): Definition | null {
+  const searchPath = buildSearchPath(document);
+
+  const hasSlash = importPath.includes("/");
+  const hasDots = importPath.includes(".");
+
+  const candidates: string[] = [];
+
+  if (hasDots) {
+    candidates.push(importPath.replace(/\./g, "/") + ".asy");
+    candidates.push(importPath.replace(/\./g, "/"));
+  }
+
+  candidates.push(importPath + ".asy");
+  candidates.push(importPath);
+
+  if (hasSlash || hasDots) {
+    candidates.push(importPath + ".asy" + ".asy");
+  }
+
+  if (/^\.asy$/.test(path.extname(importPath))) {
+    candidates.push(importPath + ".asy");
+  } else {
+    candidates.push(importPath);
+  }
+
+  if (path.isAbsolute(importPath)) {
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return createFileLocation(candidate);
+      }
+    }
+  }
+
+  for (const dir of searchPath) {
+    for (const candidate of candidates) {
+      const fullPath = path.join(dir, candidate);
+      if (fs.existsSync(fullPath)) {
+        return createFileLocation(fullPath);
+      }
+    }
+  }
+
+  return null;
+}
+
+let cachedSearchModules: CompletionItem[] = [];
+let cachedSearchPathHash: string = "";
+
+function scanSearchPathModules(searchPath: string[]): CompletionItem[] {
+  const items: CompletionItem[] = [];
+  const seen = new Set<string>();
+
+  for (const dir of searchPath) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith(".asy")) {
+          const moduleName = entry.name.slice(0, -4);
+          if (!seen.has(moduleName)) {
+            seen.add(moduleName);
+            items.push({
+              label: moduleName,
+              kind: CompletionItemKind.Module,
+              detail: `${moduleName} - from ${dir}`,
+            });
+          }
+        } else if (entry.isDirectory()) {
+          try {
+            const subEntries = fs.readdirSync(path.join(dir, entry.name), {
+              withFileTypes: true,
+            });
+            for (const subEntry of subEntries) {
+              if (subEntry.isFile() && subEntry.name.endsWith(".asy")) {
+                const moduleName = `${entry.name}.${subEntry.name.slice(0, -4)}`;
+                if (!seen.has(moduleName)) {
+                  seen.add(moduleName);
+                  items.push({
+                    label: moduleName,
+                    kind: CompletionItemKind.Module,
+                    detail: `${moduleName} - from ${path.join(dir, entry.name)}`,
+                  });
+                }
+              }
+            }
+          } catch { /* skip unreadable subdirectories */ }
+        }
+      }
+    } catch { /* skip unreadable directories */ }
+  }
+
+  return items;
+}
+
+function getModuleCompletions(): CompletionItem[] {
+  const searchPath = workspaceFolders.length > 0
+    ? workspaceFolders.concat(
+        [expandPath(process.env.ASYMPTOTE_HOME || path.join(os.homedir(), ".asy"))]
+      )
+    : [expandPath(process.env.ASYMPTOTE_HOME || path.join(os.homedir(), ".asy"))];
+
+  const currentHash = searchPath.join(":");
+  if (currentHash !== cachedSearchPathHash) {
+    cachedSearchPathHash = currentHash;
+    cachedSearchModules = scanSearchPathModules(searchPath);
+  }
+
+  const seen = new Set(standardLibraryModules.map((m) => m.name));
+  const items: CompletionItem[] = standardLibraryModules.map((mod) => ({
+    label: mod.name,
+    kind: CompletionItemKind.Module,
+    detail: `${mod.name} - ${mod.description}`,
+  }));
+
+  for (const item of cachedSearchModules) {
+    if (!seen.has(item.label)) {
+      seen.add(item.label);
+      items.push(item);
+    }
+  }
+
+  return items;
 }

@@ -67,6 +67,16 @@ export const constants: { label: string; detail: string }[] = [
   { label: 'currentpicture', detail: 'Current picture' },
   { label: 'defaultpen', detail: 'Default pen' },
   { label: 'zero', detail: 'Zero pair/triple value' },
+  { label: 'IgnoreAspect', detail: 'Boolean constant: suppress aspect ratio enforcement in size()' },
+  { label: 'Fill', detail: 'Fill arrowhead (used with Arrow)' },
+  { label: 'NoFill', detail: 'Unfilled arrowhead (used with Arrow)' },
+  { label: 'Blank', detail: 'No arrowhead' },
+  { label: 'BeginPenMargin', detail: 'Default begin arrow margin' },
+  { label: 'EndPenMargin', detail: 'Default end arrow margin' },
+  { label: 'PenMargins', detail: 'Default pen margins for arrows' },
+  { label: 'LeftSide', detail: 'Label to left side of path' },
+  { label: 'RightSide', detail: 'Label to right side of path' },
+  { label: 'Align', detail: 'Align label to path direction' },
 ];
 
 // ========== BUILT-IN FUNCTION SIGNATURES ==========
@@ -133,6 +143,16 @@ export const builtinFunctions: FuncSignature[] = [
   { label: 'add', insertText: 'add(${1:picture/drawable});', detail: 'Add a picture or drawable element to currentpicture', signatures: [
     { label: 'add(picture pic, frame f)', parameters: [{ label: '(pic, f)' }] },
     { label: 'add(frame f)', parameters: [{ label: '(f)' }] },
+  ] },
+  { label: 'Arrow', insertText: 'Arrow(${1:position}${2:, arrowhead}${3:, scale});', detail: 'Draw arrow decoration on path', signatures: [
+    { label: 'Arrow(pair position, arrowhead arrowhead=DefaultArrow, real size=0, ...)', parameters: [{ label: '(pos, head, size, ...)' }] },
+    { label: 'Arrow(real position, arrowhead arrowhead=DefaultArrow, real size=0, ...)', parameters: [{ label: '(relpos, head, size, ...)' }] },
+  ] },
+  { label: 'PenMargin', insertText: 'PenMargin(${1:begin}${2:, end});', detail: 'Creates arrow margin', signatures: [
+    { label: 'PenMargin(real begin, real end=begin)', parameters: [{ label: '(begin, end)' }] },
+  ] },
+  { label: 'minipage', insertText: 'minipage(${1:text}${2:, width});', detail: 'Multi-line text paragraph (minipage)', signatures: [
+    { label: 'minipage(string s, real width)', parameters: [{ label: '(s, width)' }] },
   ] },
   { label: 'dot', insertText: 'dot(${1:pair/guide}${2:, pen});', detail: 'Draw a dot', signatures: [
     { label: 'dot(picture pic, pair z, pen p=currentpen)', parameters: [{ label: '(pic, z, p)' }] },
