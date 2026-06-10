@@ -2,7 +2,9 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Asymptote",
   "scopeName": "source.asy",
-  "fileTypes": [".asy"],
+  "fileTypes": [
+    ".asy"
+  ],
   "patterns": [
     {
       "include": "#comments"
@@ -32,10 +34,19 @@
       "include": "#builtin-types"
     },
     {
+      "include": "#builtin-types-3d"
+    },
+    {
       "include": "#constants"
     },
     {
       "include": "#builtin-functions"
+    },
+    {
+      "include": "#builtin-functions-3d"
+    },
+    {
+      "include": "#builtin-functions-spline"
     },
     {
       "include": "#numbers"
@@ -55,7 +66,12 @@
             "0": {
               "name": "punctuation.definition.comment.asy"
             }
-          }
+          },
+          "patterns": [
+            {
+              "include": "#comment-keywords"
+            }
+          ]
         },
         {
           "name": "comment.line.double-slash.asy",
@@ -65,7 +81,12 @@
             "0": {
               "name": "punctuation.definition.comment.asy"
             }
-          }
+          },
+          "patterns": [
+            {
+              "include": "#comment-keywords"
+            }
+          ]
         }
       ]
     },
@@ -235,7 +256,7 @@
       "patterns": [
         {
           "name": "storage.type.asy",
-          "match": "\\b(bool|int|real|string|void|pair|triple|transform|guide|path|path3|pen|frame|picture|file|code)\\b"
+          "match": "\\b(bool|int|real|string|void|pair|triple|transform|guide|path|path3|pen|frame|picture|file|code|Label|Marker|Ticks|Tick|arrowbar|arrowhead|Segment|Ray|Circle|Arc|Ellipse|Parabola|Hyperbola|conic|BBox|BBox3|Legend|light|projection|material)\b"
         }
       ]
     },
@@ -251,11 +272,11 @@
         },
         {
           "name": "constant.language.asy",
-          "match": "\\b(pi|inf|infinity|nan|zero|VERSION|realEpsilon|realDigits|realMin|realMax|intMax|intMin|randMax)\\b"
+          "match": "\\b(pi|inf|infinity|nan|zero|VERSION|realEpsilon|realDigits|realMin|realMax|intMax|intMin|randMax|IgnoreAspect|Fill|NoFill|Blank|BeginPenMargin|EndPenMargin|PenMargins|LeftSide|RightSide|Align|Aspect|NoAspect)\\b"
         },
         {
           "name": "constant.language.special.asy",
-          "match": "\\b(newframe|cycleToken|currentpen|currentpicture|defaultpen)\\b"
+          "match": "\\b(newframe|cycleToken|currentpen|currentpicture|defaultpen|currentcoordsys|currentprojection|currentlight|whitelight|invisible|identity|Align|NoAlign|NNE|NNW|SSE|SSW|ENE|WNW|ESE|WSW|NE|NW|SE|SW|N|S|E|W)\\b"
         }
       ]
     },
@@ -263,7 +284,7 @@
       "patterns": [
         {
           "name": "support.function.math.asy",
-          "match": "\\b(sin|cos|tan|asin|acos|atan|sinh|cosh|tanh|asinh|acosh|atanh|exp|log|log10|sqrt|cbrt|abs|fabs|expm1|log1p|ldexp|pow|pow10|floor|ceil|round|min|max|sum|interp|sort|search)\\b"
+          "match": "\\b(sin|cos|tan|asin|acos|atan|sinh|cosh|tanh|asinh|acosh|atanh|atan2|exp|log|log10|sqrt|cbrt|abs|fabs|expm1|log1p|ldexp|pow|pow10|floor|ceil|round|min|max|sum|interp|sort|search|sgn|factorial|gamma|erf|erfc|Bessel|BesselJ|BesselY|hypot|fmod|remainder)\\b"
         },
         {
           "name": "support.function.pair.asy",
@@ -271,7 +292,7 @@
         },
         {
           "name": "support.function.drawing.asy",
-          "match": "\\b(draw|fill|filldraw|label|clip|shipout|add|erase|dot|undraw|unfill|size|unitsize|scale|newpage|save|restore|layer)\\b"
+          "match": "\\b(draw|fill|filldraw|label|clip|shipout|add|erase|dot|undraw|unfill|size|unitsize|scale|newpage|save|restore|layer|graph|axes|xaxis|yaxis|zaxis|xequals|yequals|zequals|grid|xgrid|ygrid|zgrid|legend|palette|contour|Arrow|PenMargin|margin|BeginMargin|EndMargin|PenMargins|markers|markuniform|marker|arrow|minipage|fontsize|defaultpen|currentpen|boxes|roundbox)\\b"
         },
         {
           "name": "support.function.transform.asy",
@@ -316,6 +337,42 @@
         {
           "name": "variable.other.asy",
           "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "builtin-types-3d": {
+      "patterns": [
+        {
+          "name": "storage.type.3d.asy",
+          "match": "\\b(material|light|projection|Camera|Segment|Ray|Circle|Arc|Ellipse|Parabola|Hyperbola|conic|BBox|BBox3|Sphere|Cylinder|Cone|tube|surface|revolution|solid|grid3|graph3|legend|palette|Marker|Ticks|Tick|arrowbar|arrowhead|scaleT|autoscaleT|Legend)\b"
+        }
+      ]
+    },
+    "builtin-functions-3d": {
+      "patterns": [
+        {
+          "name": "support.function.3d.asy",
+          "match": "\\b(graph3|parametric|surface|extrude|tube|revolution|box|cylinder|cone|sphere|ellipsoid|grid3|xgrid3|ygrid3|zgrid3|contour3|implicit|light|currentlight|whitelight|viewport|embed|project|Camera|currentprojection|orthographic|perspective|oblique|XZView|YZView|XYView|ZView|YView|XView|render|size3|unitsize3)\\b"
+        }
+      ]
+    },
+    "builtin-functions-spline": {
+      "patterns": [
+        {
+          "name": "support.function.spline.asy",
+          "match": "\\b(spline|Hermite|NURBS|Monotonic|Linear|Step|Hyperbolic|interpolate|bezier|bezierP|bezierPP|bezierPPP|tension|curl|uniform|rational|piecewisestraight|straight|bend|curved|flat|complex|specular|diffuse|ambient|emissive|phong|blinn|lambert|gouraud|flatpanel|nolight|operator)\\b"
+        }
+      ]
+    },
+    "comment-keywords": {
+      "patterns": [
+        {
+          "name": "comment.todo.asy",
+          "match": "\\b(TODO|FIXME|XXX)\\b"
+        },
+        {
+          "name": "comment.note.asy",
+          "match": "\\b(NOTE|HACK|OPTIMIZE|REVIEW|BUG)\\b"
         }
       ]
     }
