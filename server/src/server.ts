@@ -363,9 +363,11 @@ connection.onCompletion((params): CompletionItem[] => {
   const offset = document.offsetAt(params.position);
   const lineText = getLineText(document, params.position.line);
   const charBeforeCursor = offset > 0 ? text[offset - 1] : "";
+  connection.console.log(`[completion] trigger charBefore="${charBeforeCursor}" line="${lineText.trim().slice(0,60)}"`);
 
   // ===== IMPORT COMPLETION (standard library modules) =====
   if (isAfterImport(lineText)) {
+    connection.console.log("[completion] → import path");
     return getModuleCompletions();
   }
 
@@ -376,10 +378,12 @@ connection.onCompletion((params): CompletionItem[] => {
 
   // ===== DOT COMPLETION (member access) =====
   if (charBeforeCursor === ".") {
+    connection.console.log("[completion] → dot (charBefore)");
     return getMemberCompletions(document, text, offset);
   }
   const dotIdx = text.substring(0, offset).lastIndexOf(".");
   if (dotIdx > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(text.substring(dotIdx + 1, offset))) {
+    connection.console.log("[completion] → dot (inline)");
     return getMemberCompletions(document, text, offset);
   }
 
@@ -390,9 +394,13 @@ connection.onCompletion((params): CompletionItem[] => {
 
   // ===== SPACE COMPLETION =====
   if (shouldProvideCompletions(lineText, charBeforeCursor)) {
-    return getAllCompletions();
+    connection.console.log("[completion] → space/free, calling getAllCompletions");
+    const all = getAllCompletions(document);
+    connection.console.log(`[completion] getAllCompletions → ${all.length} items`);
+    return all;
   }
 
+  connection.console.log("[completion] → fallthrough (no completions)");
   return [];
 });
 
@@ -1177,30 +1185,14 @@ function isAfterInclude(lineText: string): boolean {
 
 function shouldProvideCompletions(
   lineText: string,
-  charBefore: string
+  _charBefore: string
 ): boolean {
   const trimmed = lineText.trimStart();
-  // Don't provide completions inside comments
   if (/^\/\//.test(trimmed)) return false;
-
-  // Provide after newline or space at start of statement
-  if (!charBefore || charBefore === " ") {
-    // Skip if we're after a dot operator
-    const lastDot = lineText.lastIndexOf(".");
-    const lastSpace = lineText.lastIndexOf(" ");
-    if (lastDot > lastSpace) return false;
-    return true;
-  }
-
-  // After a delimiter
-  if ([ ",", ";", "{", "}", "[", "]" ].includes(charBefore)) {
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
-function getAllCompletions(): CompletionItem[] {
+function getAllCompletions(document: TextDocument): CompletionItem[] {
   const items: CompletionItem[] = [];
 
   // Keywords (as snippets)
@@ -1253,6 +1245,8 @@ function getAllCompletions(): CompletionItem[] {
       insertTextFormat: InsertTextFormat.Snippet,
     });
   }
+  // Local symbols
+  items.push(...getLocalSymbolCompletions(document));
 
   return items;
 }
@@ -1277,7 +1271,7 @@ function getMemberCompletions(document: TextDocument, text: string, offset: numb
 
   buildStructIndex(document);
   const varType = resolveVariableType(document, objName);
-  connection.console.log(`[dot] obj=${objName} varType=${varType || "null"} has-struct=${structIndex.has(objName)} has-type=${structIndex.has(varType || "")} size=${structIndex.size}`);
+  connection.console.log(`[completion] dot obj=${objName} varType=${varType || "null"} structIdxHas_obj=${structIndex.has(objName)} structIdxHas_type=${structIndex.has(varType || "")} structIdxSize=${structIndex.size}`);
   if (varType) {
     const members = getStructMembers(varType);
     connection.console.log(`[dot] type=${varType} members=${members.length} names=[${members.map(m=>m.name).join(",")}]`);
@@ -1915,3 +1909,28 @@ function getModuleCompletions(): CompletionItem[] {
 
   return items;
 }
+
+function getLocalSymbolCompletions(document: TextDocument): CompletionItem[] {
+  connection.console.log("[completion] getLocalSymbolCompletions called");
+  const text = document.getText();
+  const seen = new Set(keywords);
+  for (const t of builtinTypes) seen.add(t.label);
+  for (const f of builtinFunctions) seen.add(f.label);
+  for (const c of constants) seen.add(c.label);
+
+  const items: CompletionItem[] = [];
+  const declRegex = /\b([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\[\])?(?:\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)?\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|=|\s*\()/g;
+  let m: RegExpExecArray | null;
+  while ((m = declRegex.exec(text)) !== null) {
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const hasParams = text[m.index + m[0].length - 1] === '(';
+    items.push({
+      label: name,
+      kind: hasParams ? CompletionItemKind.Function : CompletionItemKind.Variable,
+    });
+  }
+  return items;
+}
+
