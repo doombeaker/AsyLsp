@@ -37,6 +37,8 @@ import {
   PrepareRenameParams,
   RenameParams,
   TextDocumentPositionParams,
+  FoldingRange,
+  FoldingRangeRequest,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
@@ -181,6 +183,7 @@ connection.onInitialize((params: InitializeParams) => {
       referencesProvider: true,
       colorProvider: true,
       renameProvider: { prepareProvider: true },
+      foldingRangeProvider: true,
     },
   };
 
@@ -920,6 +923,39 @@ function findAllReferences(
 
   return results;
 }
+
+connection.onRequest(FoldingRangeRequest.type, (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+  const text = document.getText();
+  const ranges: FoldingRange[] = [];
+  const stack: { line: number; startChar: number }[] = [];
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") {
+      const pos = document.positionAt(i);
+      stack.push({ line: pos.line, startChar: pos.character });
+    } else if (text[i] === "}" && stack.length > 0) {
+      const start = stack.pop()!;
+      const pos = document.positionAt(i);
+      if (start.line !== pos.line) {
+        ranges.push({ startLine: start.line, endLine: pos.line });
+      }
+    } else if (text.substring(i, i + 2) === "/*") {
+      const startPos = document.positionAt(i);
+      const end = text.indexOf("*/", i + 2);
+      if (end !== -1) {
+        const endPos = document.positionAt(end);
+        if (startPos.line !== endPos.line) {
+          ranges.push({ startLine: startPos.line, endLine: endPos.line });
+        }
+        i = end + 1;
+      }
+    }
+  }
+
+  return ranges;
+});
 
 // Make the text document manager listen on the connection
 // for open, change, and close text document events
