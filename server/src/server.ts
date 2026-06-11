@@ -27,6 +27,16 @@ import {
   SemanticTokensBuilder,
   SemanticTokens,
   SemanticTokensRequest,
+  DocumentSymbol,
+  SymbolKind,
+  ColorInformation,
+  Color,
+  ColorPresentation,
+  ReferenceParams,
+  WorkspaceEdit,
+  PrepareRenameParams,
+  RenameParams,
+  TextDocumentPositionParams,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
@@ -167,6 +177,10 @@ connection.onInitialize((params: InitializeParams) => {
         },
         full: true,
       },
+      documentSymbolProvider: true,
+      referencesProvider: true,
+      colorProvider: true,
+      renameProvider: { prepareProvider: true },
     },
   };
 
@@ -668,6 +682,179 @@ function tokenizeSemantic(
 
     char++; i++;
   }
+}
+
+// ========== DOCUMENT SYMBOLS PROVIDER ==========
+
+connection.onDocumentSymbol((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+  const symbols: DocumentSymbol[] = [];
+  const text = document.getText();
+  const lines = text.split("\n");
+
+  const structRegex = /struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+  let sm: RegExpExecArray | null;
+  while ((sm = structRegex.exec(text)) !== null) {
+    const pos = document.positionAt(sm.index);
+    symbols.push({
+      name: sm[1],
+      kind: SymbolKind.Struct,
+      range: { start: pos, end: document.positionAt(sm.index + sm[0].length) },
+      selectionRange: { start: pos, end: document.positionAt(sm.index + sm[1].length + 6) },
+    });
+  }
+
+  const funcRegex = /\b([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let fm: RegExpExecArray | null;
+  while ((fm = funcRegex.exec(text)) !== null) {
+    const retType = fm[1];
+    if (keywordSet.has(retType) && retType !== "struct" && retType !== "typedef") continue;
+    if (retType !== "void" && !builtinTypeNames.has(retType) && !/[A-Z]/.test(retType[0])) continue;
+    const pos = document.positionAt(fm.index + fm[0].indexOf(fm[2]));
+    symbols.push({
+      name: fm[2],
+      kind: SymbolKind.Function,
+      range: { start: pos, end: document.positionAt(fm.index + fm[0].length) },
+      selectionRange: { start: pos, end: document.positionAt(fm.index + fm[0].indexOf(fm[2]) + fm[2].length) },
+    });
+  }
+
+  return symbols;
+});
+
+const builtinTypeNames = new Set(builtinTypes.map((t) => t.label));
+const keywordSet = new Set(keywords);
+
+// ========== REFERENCES PROVIDER ==========
+
+connection.onReferences((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+  const wordRange = getWordRangeAtPosition(document, params.position);
+  if (!wordRange) return [];
+  const word = document.getText(wordRange);
+  return findAllReferences(word, document);
+});
+
+// ========== COLOR PROVIDER ==========
+
+const namedColors: Record<string, [number, number, number, number]> = {
+  white: [1, 1, 1, 1], black: [0, 0, 0, 1],
+  red: [1, 0, 0, 1], green: [0, 1, 0, 1], blue: [0, 0, 1, 1],
+  yellow: [1, 1, 0, 1], magenta: [1, 0, 1, 1], cyan: [0, 1, 1, 1],
+  orange: [1, 0.647, 0, 1], purple: [0.502, 0, 0.502, 1],
+  pink: [1, 0.753, 0.796, 1], brown: [0.647, 0.165, 0.165, 1],
+  gray: [0.5, 0.5, 0.5, 1], grey: [0.5, 0.5, 0.5, 1],
+  lightgray: [0.827, 0.827, 0.827, 1], lightgrey: [0.827, 0.827, 0.827, 1],
+  darkgray: [0.663, 0.663, 0.663, 1], darkgrey: [0.663, 0.663, 0.663, 1],
+  olive: [0.502, 0.502, 0, 1], teal: [0, 0.502, 0.502, 1],
+  navy: [0, 0, 0.502, 1], maroon: [0.502, 0, 0, 1],
+  lime: [0.749, 1, 0, 1], aqua: [0, 1, 1, 1],
+  silver: [0.753, 0.753, 0.753, 1],
+};
+
+connection.onDocumentColor((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+  const colors: ColorInformation[] = [];
+  const text = document.getText();
+
+  for (const [name, rgba] of Object.entries(namedColors)) {
+    const regex = new RegExp(`\\b${name}\\b`, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      const pos = document.positionAt(match.index);
+      colors.push({
+        range: { start: pos, end: document.positionAt(match.index + name.length) },
+        color: Color.create(rgba[0], rgba[1], rgba[2], rgba[3]),
+      });
+    }
+  }
+
+  const rgbRegex = /rgb\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rgbRegex.exec(text)) !== null) {
+    const pos = document.positionAt(rm.index);
+    colors.push({
+      range: { start: pos, end: document.positionAt(rm.index + rm[0].length) },
+      color: Color.create(parseFloat(rm[1]), parseFloat(rm[2]), parseFloat(rm[3]), 1),
+    });
+  }
+
+  return colors;
+});
+
+connection.onColorPresentation(() => []);
+
+// ========== RENAME PROVIDER ==========
+
+connection.onPrepareRename((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return null;
+  const wordRange = getWordRangeAtPosition(document, params.position);
+  if (!wordRange) return null;
+  const word = document.getText(wordRange);
+  if (keywordSet.has(word)) return null;
+  return wordRange;
+});
+
+connection.onRenameRequest((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return null;
+  const wordRange = getWordRangeAtPosition(document, params.position);
+  if (!wordRange) return null;
+  const word = document.getText(wordRange);
+
+  const locations = findAllReferences(word, document, wordRange);
+  if (locations.length === 0) return null;
+
+  const edits: Record<string, TextEdit[]> = {};
+  for (const loc of locations) {
+    const uri = loc.uri;
+    if (!edits[uri]) edits[uri] = [];
+    edits[uri].push({ range: loc.range, newText: params.newName });
+  }
+  return { changes: edits };
+});
+
+function findAllReferences(
+  word: string,
+  document: TextDocument,
+  excludeRange?: Range
+): Location[] {
+  const escaped = escapeRegex(word);
+  const results: Location[] = [];
+  const refRegex = new RegExp(`\\b(${escaped})\\b`, "g");
+
+  const addMatches = (content: string, uri: string) => {
+    let match: RegExpExecArray | null;
+    while ((match = refRegex.exec(content)) !== null) {
+      const pos = document.positionAt(match.index);
+      if (excludeRange &&
+        pos.line === excludeRange.start.line &&
+        pos.character === excludeRange.start.character) continue;
+      results.push({
+        uri,
+        range: { start: pos, end: { line: pos.line, character: pos.character + word.length } },
+      });
+    }
+  };
+
+  addMatches(document.getText(), document.uri);
+
+  const importedModules = getDocumentImports(document);
+  for (const moduleName of importedModules) {
+    const moduleFile = resolveModuleFile(moduleName, document);
+    if (!moduleFile) continue;
+    try {
+      const content = fs.readFileSync(moduleFile, "utf-8");
+      const fileUri = moduleFile.startsWith("/") ? `file://${moduleFile}` : `file:///${moduleFile}`;
+      addMatches(content, fileUri);
+    } catch { /* skip */ }
+  }
+
+  return results;
 }
 
 // Make the text document manager listen on the connection

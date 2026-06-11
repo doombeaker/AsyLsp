@@ -86,6 +86,22 @@ Style properties: `"foreground"` (hex color), `"fontStyle"` (`"bold"`, `"italic"
 - **Overloaded functions**: when a function has multiple definitions, all locations are listed
 - **Dot-access**: `object.method()` resolves `object` as a module and finds `method`
 
+### Find All References
+
+Right-click a symbol → **Find All References** (or `Shift+F12`) to locate every usage across the current file and imported modules.
+
+### Rename Symbol (F2)
+
+Rename a function, variable, struct, or parameter across all files where it is defined or referenced. Uses the same cross-module search as Find All References.
+
+### Document Outline
+
+The Outline sidebar shows a structured view of all struct definitions and function definitions in the current file for quick navigation.
+
+### Color Preview
+
+Named pen colors (`red`, `blue`, `lightgray`, `magenta`, `pink`, `olive`, `navy`, `teal`, `orange`, `purple`, `brown`, `maroon`, `lime`, `aqua`, `silver`) and `rgb(...)` expressions display inline color swatches in the editor.
+
 ### Hover
 
 - Built-in types, constants, and functions show their signatures and documentation
