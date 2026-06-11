@@ -222,6 +222,7 @@ connection.onInitialized(() => {
 // ========== CONFIGURATION CHANGE ==========
 
 connection.onDidChangeConfiguration((change) => {
+  if (!change || !change.settings) return;
   const asySettings = (change.settings.asymptote || {}) as Partial<AsymptoteSettings>;
   if (asySettings.searchPaths !== undefined) {
     globalSettings.searchPaths = asySettings.searchPaths;
@@ -375,7 +376,11 @@ connection.onCompletion((params): CompletionItem[] => {
 
   // ===== DOT COMPLETION (member access) =====
   if (charBeforeCursor === ".") {
-    return getMemberCompletions(text, offset);
+    return getMemberCompletions(document, text, offset);
+  }
+  const dotIdx = text.substring(0, offset).lastIndexOf(".");
+  if (dotIdx > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(text.substring(dotIdx + 1, offset))) {
+    return getMemberCompletions(document, text, offset);
   }
 
   // ===== PAREN COMPLETION =====
@@ -564,6 +569,7 @@ function tokenizeSemantic(
   builder: SemanticTokensBuilder
 ): void {
   const defs = collectDefinitions(document);
+  buildStructIndex(document);
   const text = document.getText();
   const len = text.length;
   let i = 0;
@@ -670,7 +676,7 @@ function tokenizeSemantic(
       } else if (builtinFuncSet.has(word)) {
         tt = TOKEN_FUNCTION;
         mods = MOD_DEFAULTLIB;
-      } else if (defs.structs.has(word)) {
+      } else if (defs.structs.has(word) || structIndex.has(word)) {
         tt = TOKEN_TYPE;
         mods = MOD_DECLARATION;
       } else if (defs.functions.has(word)) {
@@ -964,6 +970,160 @@ documents.listen(connection);
 // Listen on the connection
 connection.listen();
 
+// ========== STRUCT INDEX & TYPE INFERENCE ==========
+
+interface StructMember {
+  name: string;
+  type: string;
+}
+
+const structIndex = new Map<string, StructMember[]>();
+const structIndexCache = new Map<string, number>();
+
+function parseStructBodies(text: string): Map<string, StructMember[]> {
+  const result = new Map<string, StructMember[]>();
+  const kwSet = new Set(["if","else","for","while","return","break","continue","unravel","from","import","access","using","typedef","new"]);
+  let i = 0;
+  while ((i = text.indexOf("struct", i)) !== -1) {
+    if (i > 0 && /[A-Za-z0-9_]/.test(text[i - 1])) { i += 6; continue; }
+    let j = i + 6;
+    while (j < text.length && /[ \t]/.test(text[j])) j++;
+    if (j >= text.length || !/[A-Za-z_]/.test(text[j])) { i++; continue; }
+    const idStart = j;
+    while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++;
+    const name = text.slice(idStart, j);
+    if (name === "typedef") { i = j; continue; }
+    const braceStart = text.indexOf("{", j);
+    if (braceStart === -1) { i = j; continue; }
+    let depth = 0;
+    let k = braceStart;
+    for (; k < text.length; k++) {
+      if (text[k] === "{") depth++;
+      else if (text[k] === "}") { depth--; if (depth === 0) break; }
+      else if (text[k] === '"' || text[k] === "'") {
+        const q = text[k]; k++;
+        while (k < text.length && text[k] !== q) { if (text[k] === "\\") k++; k++; }
+      }
+      else if (text[k] === "/" && k + 1 < text.length) {
+        if (text[k + 1] === "/") { while (k < text.length && text[k] !== "\n") k++; }
+        else if (text[k + 1] === "*") { k += 2; while (k + 1 < text.length && !(text[k] === "*" && text[k + 1] === "/")) k++; k++; }
+      }
+    }
+    if (k >= text.length) { i = braceStart + 1; continue; }
+    const body = text.slice(braceStart + 1, k);
+    const members = parseStructMembers(body, name, kwSet);
+    result.set(name, members);
+    i = k + 1;
+  }
+  return result;
+}
+
+function parseStructMembers(body: string, structName: string, kwSet: Set<string>): StructMember[] {
+  const members: StructMember[] = [];
+  let i = 0;
+  while (i < body.length) {
+    while (i < body.length && /[ \t\n\r]/.test(body[i])) i++;
+    if (i >= body.length) break;
+    if (body[i] === "/" && i + 1 < body.length) {
+      if (body[i + 1] === "/") { i += 2; while (i < body.length && body[i] !== "\n") i++; continue; }
+      if (body[i + 1] === "*") { i += 2; while (i + 1 < body.length && !(body[i] === "*" && body[i + 1] === "/")) i++; i += 2; continue; }
+    }
+    if (body[i] === "{") { let d = 1; i++; while (i < body.length && d > 0) { if (body[i] === "{") d++; else if (body[i] === "}") d--; i++; } continue; }
+    if (body[i] === ";") { i++; continue; }
+    const lineMatch = body.slice(i).match(/^([^\n]*)/);
+    if (!lineMatch) { i++; continue; }
+    const line = lineMatch[1].trim();
+    if (!line) { i++; continue; }
+    const firstWord = line.split(/\s+/)[0];
+    if (kwSet.has(firstWord)) { i += lineMatch[0].length + 1; continue; }
+    if (firstWord === "struct" || (firstWord === "void" && line.includes("operator"))) { i += lineMatch[0].length + 1; continue; }
+    if (firstWord === "typedef") { i += lineMatch[0].length + 1; continue; }
+    const declMatch = line.match(/^(?:(?:public|private|restricted|static|explicit|autounravel)\s+)*([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*)(?:\[\])?\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|=)/);
+    if (declMatch) {
+      const mType = declMatch[1];
+      const mName = declMatch[2];
+      if (mName !== structName) {
+        members.push({ name: mName, type: mType });
+      }
+    }
+    i += lineMatch[0].length + 1;
+  }
+  return members;
+}
+
+function buildStructIndex(document: TextDocument): void {
+  const searchPath = buildSearchPath(document);
+  for (const dir of searchPath) {
+    const scanDirs = [dir, path.join(dir, "base")];
+    for (const d of scanDirs) {
+      if (!fs.existsSync(d)) continue;
+      try {
+        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+          const fp = path.join(d, entry.name);
+          if (entry.isFile() && entry.name.endsWith(".asy")) {
+            indexFile(fp);
+          } else if (entry.isDirectory()) {
+            try {
+              for (const se of fs.readdirSync(fp, { withFileTypes: true })) {
+                if (se.isFile() && se.name.endsWith(".asy")) {
+                  indexFile(path.join(fp, se.name));
+                }
+              }
+            } catch { /* skip */ }
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+}
+
+function indexFile(fp: string): void {
+  try {
+    const stat = fs.statSync(fp);
+    const cached = structIndexCache.get(fp);
+    if (cached === stat.mtimeMs) return;
+    structIndexCache.set(fp, stat.mtimeMs);
+    const content = fs.readFileSync(fp, "utf-8");
+    const structs = parseStructBodies(content);
+    for (const [name, members] of structs) {
+      if (!structIndex.has(name) || members.length > 0) {
+        structIndex.set(name, members);
+      }
+    }
+  } catch { /* skip */ }
+}
+
+function resolveVariableType(document: TextDocument, varName: string): string | null {
+  const text = document.getText();
+  const escaped = escapeRegex(varName);
+  const regex = new RegExp(
+    "(?:^|;|\\{|\\})\\s*" +
+    "((?:public|private|restricted|static|explicit|autounravel)\\s+)*" +
+    "([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)*)\\s+" +
+    "(" + escaped + ")\\b",
+    "gm"
+  );
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    const t = m[2];
+    if (t && t !== "for" && t !== "while" && t !== "if" && t !== "else" && t !== "return") {
+      return t;
+    }
+  }
+  return null;
+}
+
+function getStructMembers(typeName: string): StructMember[] {
+  const builtins: Record<string, StructMember[]> = {
+    pair: [{name:"x",type:"real"},{name:"y",type:"real"}],
+    triple: [{name:"x",type:"real"},{name:"y",type:"real"},{name:"z",type:"real"}],
+    transform: [{name:"x",type:"real"},{name:"y",type:"real"},
+      {name:"xx",type:"real"},{name:"xy",type:"real"},{name:"yx",type:"real"},{name:"yy",type:"real"}],
+  };
+  if (builtins[typeName]) return builtins[typeName];
+  return structIndex.get(typeName) || [];
+}
+
 // ========== HELPER FUNCTIONS ==========
 
 function getLineText(document: TextDocument, line: number): string {
@@ -1097,15 +1257,14 @@ function getAllCompletions(): CompletionItem[] {
   return items;
 }
 
-function getMemberCompletions(text: string, offset: number): CompletionItem[] {
-  // Get the word before the dot
-  const beforeDot = text.substring(0, offset - 1);
+function getMemberCompletions(document: TextDocument, text: string, offset: number): CompletionItem[] {
+  const dotPos = text.lastIndexOf(".", offset - 1);
+  if (dotPos === -1) return [];
+  const beforeDot = text.substring(0, dotPos);
   const wordMatch = beforeDot.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/);
   if (!wordMatch) return [];
-
   const objName = wordMatch[1];
 
-  // Check known type members
   if (typeMemberMap[objName]) {
     return typeMemberMap[objName].map((m) => ({
       label: m.label,
@@ -1114,23 +1273,34 @@ function getMemberCompletions(text: string, offset: number): CompletionItem[] {
     }));
   }
 
-  // Check if objName is a known type
-  const builtinType = builtinTypes.find((t) => t.label === objName);
-  if (builtinType) {
-    return [];
+  if (builtinTypes.find((t) => t.label === objName)) return [];
+
+  buildStructIndex(document);
+  const varType = resolveVariableType(document, objName);
+  connection.console.log(`[dot] obj=${objName} varType=${varType || "null"} has-struct=${structIndex.has(objName)} has-type=${structIndex.has(varType || "")} size=${structIndex.size}`);
+  if (varType) {
+    const members = getStructMembers(varType);
+    connection.console.log(`[dot] type=${varType} members=${members.length} names=[${members.map(m=>m.name).join(",")}]`);
+    if (members.length > 0) {
+      return members.map((m) => ({
+        label: m.name,
+        kind: CompletionItemKind.Field,
+        detail: `${m.name}: ${m.type}`,
+      }));
+    }
   }
 
-  // Generic array members (if variable name suggests array)
-  if (
-    objName.endsWith("[]") ||
-    objName.toLowerCase().includes("array") ||
-    objName.toLowerCase().includes("list")
-  ) {
-    return arrayMembers.map((m) => ({
-      label: m.label,
-      kind: CompletionItemKind.Method,
-      detail: m.detail,
+  const structMembers = getStructMembers(objName);
+  if (structMembers.length > 0) {
+    return structMembers.map((m) => ({
+      label: m.name,
+      kind: CompletionItemKind.Field,
+      detail: `${m.name}: ${m.type}`,
     }));
+  }
+
+  if (objName.endsWith("[]") || objName.toLowerCase().includes("array") || objName.toLowerCase().includes("list")) {
+    return arrayMembers.map((m) => ({ label: m.label, kind: CompletionItemKind.Method, detail: m.detail }));
   }
 
   return [];
@@ -1431,9 +1601,34 @@ function resolveDotAccess(
   document: TextDocument
 ): Location[] | null {
   const modulePath = resolveModuleFile(objectName, document);
-  if (!modulePath) return null;
-  const results = findSymbolInFile(modulePath, symbolName);
-  return results.length > 0 ? results : null;
+  if (modulePath) {
+    const results = findSymbolInFile(modulePath, symbolName);
+    if (results.length > 0) return results;
+  }
+
+  buildStructIndex(document);
+  const varType = resolveVariableType(document, objectName);
+  if (varType) {
+    const members = getStructMembers(varType);
+    if (members.some((m) => m.name === symbolName)) {
+      const importPath = resolveModuleFile(varType, document);
+      if (importPath) {
+        const results = findSymbolInFile(importPath, symbolName);
+        if (results.length > 0) return results;
+      }
+    }
+  }
+
+  const directMembers = getStructMembers(objectName);
+  if (directMembers.some((m) => m.name === symbolName)) {
+    const importPath = resolveModuleFile(objectName, document);
+    if (importPath) {
+      const results = findSymbolInFile(importPath, symbolName);
+      if (results.length > 0) return results;
+    }
+  }
+
+  return null;
 }
 
 function collectAllDefinitions(word: string, document: TextDocument): Location[] {
