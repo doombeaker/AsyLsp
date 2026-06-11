@@ -1,0 +1,16 @@
+**/src/**
+.git/**
+**/.omo/**
+examples/**
+.vscode/**
+asymptote*/
+site/**
+.github/**
+*.vsix
+*.md
+!README.md
+!LICENSE
+logo.asy
+**/package-lock.json
+**/tsconfig.json
+**/*.map
