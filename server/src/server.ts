@@ -2131,16 +2131,11 @@ function getImportedSymbolCompletions(document: TextDocument): CompletionItem[] 
       connection.console.log(`[import-completion]   → file size: ${content.length} chars`);
       const decls = extractModuleDeclarations(content, seen);
       connection.console.log(`[import-completion]   → extractModuleDeclarations returned ${decls.length} items: [${decls.map(d=>d.label).slice(0,20).join(", ")}${decls.length > 20 ? ", ..." : ""}]`);
-      let added = 0;
       for (const d of decls) {
-        if (!seen.has(d.label)) {
-          seen.add(d.label);
-          d.detail = `${moduleName} module`;
-          items.push(d);
-          added++;
-        }
+        d.detail = `${moduleName} module`;
+        items.push(d);
       }
-      connection.console.log(`[import-completion]   → added ${added} new symbols (${decls.length - added} filtered as already seen)`);
+      connection.console.log(`[import-completion]   → added ${decls.length} symbols`);
     } catch (e: any) {
       connection.console.log(`[import-completion]   → read/parse error: ${e?.message || "unknown"}`);
     }
