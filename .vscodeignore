@@ -1,0 +1,12 @@
+src/**
+node_modules/**
+.git/**
+.omo/**
+examples/**
+.vscode/**
+*.vsix
+*.md
+!README.md
+package-lock.json
+**/tsconfig.json
+**/*.map

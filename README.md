@@ -76,7 +76,16 @@ Style properties: `"foreground"` (hex color), `"fontStyle"` (`"bold"`, `"italic"
 - **Built-in types**: `int`, `real`, `pair`, `path`, `triple`, `pen`, `transform`, `picture`, `frame`
 - **Constants**: `pi`, `true`, `false`, `null`, `cycle`, `IgnoreAspect`, `LeftSide`, `RightSide`
 - **Module names**: Auto-scanned from search paths (see below)
+- **Imported module symbols**: functions, structs, and variables from all imported modules are auto-completed (e.g., `import drawtree;` → type `Tr` → `TreeNode` appears)
 - **Member access**: Type-aware dot completion (`pair.` → `x`, `y`; `path.` → `length`, `arclength`)
+
+### Real-time Diagnostics
+
+As-you-type error checking with no save required:
+
+- **Bracket matching**: Red squiggly on unmatched `{ }`, `( )`, `[ ]` — strings and comments are skipped
+- **Import resolution**: Yellow squiggly when `import` / `access` / `from` references a module not found in search paths
+- **Missing semicolons**: Blue info hint on lines that appear to be statements without a terminating `;` (optional in Asymptote; function definitions and brace-only lines are not flagged)
 
 ### Go-to-Definition
 
@@ -152,8 +161,9 @@ The extension resolves `import`/`include`/`access` paths in this order:
 
 1. **Workspace folders** — your VS Code workspace roots
 2. **User-configured paths** — from `asymptote.searchPaths` (supports `~` and `${VAR}` expansion)
-3. **`ASYMPTOTE_HOME` or `~/.asy`** — Asymptote user config directory
-4. **Current file's directory**
+3. **Auto-discovered system library** — detected via `kpsewhich` or TeX Live directory scan (e.g., `/usr/local/texlive/2024/texmf-dist/asymptote`), plus common Homebrew/Linux paths. No manual configuration needed for standard installations.
+4. **`ASYMPTOTE_HOME` or `~/.asy`** — Asymptote user config directory
+5. **Current file's directory**
 
 All `plain_*.asy` files found in search paths are automatically indexed as implicit imports (matching `private import plain;` behavior).
 

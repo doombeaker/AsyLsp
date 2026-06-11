@@ -1,10 +1,14 @@
 {
   "name": "asymptote-lsp",
   "displayName": "Asymptote Language Support",
-  "description": "LSP-based Asymptote language support with syntax highlighting, code completion, signature help, go-to-definition, and formatting",
+  "description": "LSP-based Asymptote language support with syntax highlighting, code completion for imported modules, real-time diagnostics, hover, go-to-definition, cross-module references, rename, formatting, and compile/preview",
   "version": "0.1.0",
-  "publisher": "asy-lsp",
+  "publisher": "asy",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/doombeaker/AsyLsp"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
