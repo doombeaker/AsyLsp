@@ -26,13 +26,29 @@
     "commands": [
       {
         "command": "asymptote.compile",
-        "title": "Asymptote: Compile"
+        "title": "Asymptote: Compile",
+        "icon": "$(run)"
       },
       {
         "command": "asymptote.preview",
-        "title": "Asymptote: Preview"
+        "title": "Asymptote: Preview",
+        "icon": "$(open-preview)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "asymptote.compile",
+          "when": "editorLangId == asymptote",
+          "group": "navigation"
+        },
+        {
+          "command": "asymptote.preview",
+          "when": "editorLangId == asymptote",
+          "group": "navigation"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "asymptote",
@@ -130,7 +146,7 @@
         },
         "asymptote.compile.autoCompile": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Automatically compile on save."
         },
         "asymptote.compile.extraArgs": {
