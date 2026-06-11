@@ -14,6 +14,7 @@ import {
   DiagnosticSeverity,
   Range,
   Position,
+  ConfigurationTarget,
 } from "vscode";
 import {
   LanguageClient,
@@ -94,6 +95,35 @@ export function activate(context: ExtensionContext) {
       if (!workspace.getConfiguration("asymptote.compile").get("autoCompile", false)) return;
       compileDocument(doc);
     })
+);
+
+  initializeSemanticColors();
+}
+
+function initializeSemanticColors(): void {
+  const semConfig = workspace.getConfiguration("editor", { languageId: "asymptote" });
+  const existing = semConfig.inspect<{ rules?: Record<string, unknown> }>(
+    "semanticTokenColorCustomizations"
+  );
+
+  if (existing?.globalValue?.rules && Object.keys(existing.globalValue.rules).length > 0) {
+    return;
+  }
+
+const defaultRules = {
+    "function.declaration": { "foreground": "#569CD6", "fontStyle": "bold" },
+    "function.defaultLibrary": { "foreground": "#DCDCAA" },
+    "type": { "foreground": "#4EC9B0" },
+    "type.defaultLibrary": { "foreground": "#4EC9B0" },
+    "type.declaration": { "foreground": "#4EC9B0", "fontStyle": "bold" },
+    "parameter": { "foreground": "#569CD6", "fontStyle": "italic" },
+    "variable.readonly.defaultLibrary": { "foreground": "#CE9178" },
+  };
+
+  semConfig.update(
+    "semanticTokenColorCustomizations",
+    { enabled: true, rules: defaultRules },
+    ConfigurationTarget.Global
   );
 }
 

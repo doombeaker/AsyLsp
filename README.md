@@ -21,107 +21,60 @@ Comprehensive TextMate grammar for Asymptote, covering:
 | Direction Constants | `N`, `S`, `E`, `W`, `NE`, `NW`, `SE`, `SW`, `NNE`, `NNW`, `SSE`, `SSW`, `ENE`, `WNW`, `ESE`, `WSW` |
 | Comments & Strings | `//`, `/* */` comments; `'...'` and `"..."` strings with escape sequences |
 
-> **Tip:** Enable **Semantic Tokens** (see below) to get richer highlighting that distinguishes function definitions from calls, parameters from local variables, and user-defined structs from built-in types.
-
 ### Semantic Tokens (Advanced Highlighting)
 
-Beyond TextMate grammar, the extension provides LSP **Semantic Tokens** for finer-grained token classification:
+Beyond TextMate grammar, the extension provides LSP **Semantic Tokens** for finer-grained classification — **zero config, works out of the box**. The default color scheme:
 
-| Token Type | What gets colored differently |
-|---|---|
-| `function` + `declaration` | Function **definition** sites (not calls) |
-| `parameter` | Function parameters |
-| `type` + `declaration` | User-defined struct names |
-| `variable` + `readonly` | Built-in constants (`pi`, `true`, `IgnoreAspect`, etc.) |
-| `function` + `defaultLibrary` | Built-in function calls (`draw`, `fill`, `sin`, etc.) |
+| Category | Color | Style | What it means |
+|---|---|---|---|
+| Function definitions | `#569CD6` (blue) | **bold** | Spot where a function is defined |
+| System functions (C-level + std-lib) | `#DCDCAA` (warm yellow) | — | "Provided by the language" |
+| Types (built-in + user structs) | `#4EC9B0` (teal) | — | Standard type color |
+| Type/struct definitions | `#4EC9B0` (teal) | **bold** | Struct declarations stand out |
+| Parameters | `#569CD6` (blue) | *italic* | Distinguish from local variables |
+| Constants | `#CE9178` (copper) | — | Immutable / fixed value |
 
-To see the effect, add semantic color customizations to your settings:
+> **Note:** `editor.semanticHighlighting.enabled` must be `true` (default in VS Code).
+
+#### Customizing the Color Scheme
+
+Override the built-in scheme in your `settings.json`:
 
 ```json
 {
   "editor.semanticTokenColorCustomizations": {
-    "enabled": true,
     "rules": {
       "function.declaration": { "fontStyle": "bold" },
       "parameter": { "fontStyle": "italic" },
-      "type.declaration": { "fontStyle": "bold" },
-      "*.defaultLibrary": { "fontStyle": "underline" },
-      "namespace.declaration": { "fontStyle": "bold" }
+      "*.defaultLibrary": { "fontStyle": "underline" }
     }
   }
 }
 ```
 
-> **Note:** The `editor.semanticHighlighting.enabled` setting must be `true` (the default in VS Code) for semantic tokens to work.
-
-#### Semantic Token Customization Guide
-
-Semantic tokens use **scope selectors** (dot-separated names matching `<type>.<modifier>`). Available selectors:
+Available selectors:
 
 | Selector | Matches |
 |---|---|
 | `function.declaration` | Function definitions |
-| `function.defaultLibrary` | Built-in function names |
+| `function.defaultLibrary` | Built-in & std-lib function names |
 | `type.declaration` | User-defined struct names |
 | `type.defaultLibrary` | Built-in type names |
+| `type` | All type references (with or without modifiers) |
 | `parameter` | Function parameters |
-| `parameter.readonly` | Parameters with defaults |
-| `variable.readonly` | Constants |
-| `namespace.declaration` | Struct definitions |
-| `*.defaultLibrary` | **Any** token that is built-in |
-| `*.declaration` | **Any** token at its definition site |
-| `*.readonly` | **Any** read-only token |
+| `variable.readonly.defaultLibrary` | Built-in constants |
+| `*.declaration` | Any definition site (wildcard) |
+| `*.defaultLibrary` | Any system-provided token (wildcard) |
+| `*.readonly` | Any readonly token (wildcard) |
 
-**VSCode customization properties** you can set on each rule:
-
-| Property | Values | Effect |
-|---|---|---|
-| `"foreground"` | `"#RRGGBB"` | Text color |
-| `"fontStyle"` | `"bold"`, `"italic"`, `"underline"`, `"strikethrough"`, `""` (clear) | Font style (can combine: `"bold italic"`) |
-
-**Example: Bold+colored function definitions, italic parameters:**
-
-```json
-{
-  "editor.semanticTokenColorCustomizations": {
-    "rules": {
-      "function.declaration": {
-        "foreground": "#569CD6",
-        "fontStyle": "bold"
-      },
-      "parameter": {
-        "fontStyle": "italic"
-      },
-      "type.declaration": {
-        "foreground": "#4EC9B0",
-        "fontStyle": "bold"
-      },
-      "*.defaultLibrary": {
-        "fontStyle": "underline"
-      }
-    }
-  }
-}
-```
-
-**Example: Subtle — only italic for parameters, everything else default:**
-
-```json
-{
-  "editor.semanticTokenColorCustomizations": {
-    "rules": {
-      "parameter": { "fontStyle": "italic" }
-    }
-  }
-}
-```
+Style properties: `"foreground"` (hex color), `"fontStyle"` (`"bold"`, `"italic"`, `"underline"`, `"strikethrough"`, combined: `"bold italic"`).
 
 ### Code Completion
 
 - **Keywords**: control-flow snippets (`if`, `for`, `while`, `return`, `struct`)
 - **Built-in functions**: `draw`, `fill`, `label`, `sin`, `cos`, `Arrow`, `PenMargin`, `size`, `graph`, `axes`, `light`, `surface`, `grid3` and many more
 - **Built-in types**: `int`, `real`, `pair`, `path`, `triple`, `pen`, `transform`, `picture`, `frame`
-- **Constants**: `pi`, `true`, `false`, `null`, `cycle`, `Zero`, `IgnoreAspect`, `LeftSide`, `RightSide`
+- **Constants**: `pi`, `true`, `false`, `null`, `cycle`, `IgnoreAspect`, `LeftSide`, `RightSide`
 - **Module names**: Auto-scanned from search paths (see below)
 - **Member access**: Type-aware dot completion (`pair.` → `x`, `y`; `path.` → `length`, `arclength`)
 
@@ -135,7 +88,7 @@ Semantic tokens use **scope selectors** (dot-separated names matching `<type>.<m
 
 ### Hover
 
-- Built-in types, constants, and functions show their signatures and documentation on hover
+- Built-in types, constants, and functions show their signatures and documentation
 - Cross-module hover: hovering a symbol imported from another module shows its source
 
 ### Signature Help
@@ -149,100 +102,44 @@ Semantic tokens use **scope selectors** (dot-separated names matching `<type>.<m
 - Configurable indent size (spaces or tabs)
 - Path expression spacing: `..`, `--`, `---`, `::` operators can be compact or spaced
 
+### Compile & Preview
+
+- **Compile**: `Asymptote: Compile` command — runs `asy` on the current file
+- **Preview**: `Asymptote: Preview` command — opens compiled output in a side-by-side panel
+- **SVG**: inline Webview rendering, vector quality, no external tools needed
+- **PDF**: opens in VSCode's built-in PDF viewer in a split column
+- **PNG**: inline Webview rendering, resolution controlled by `render` setting
+- **Error diagnostics**: compiler errors parsed and shown in the Problems panel
+- **Auto-compile on save**: optional via `asymptote.compile.autoCompile`
+
 ## Extension Settings
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `asymptote.trace.server` | `enum` | `"off"` | LSP trace level for debugging: `off`, `messages`, `verbose` |
+| `asymptote.trace.server` | `enum` | `"off"` | LSP trace level: `off`, `messages`, `verbose` |
 | `asymptote.asyPath` | `string` | `"asy"` | Path to the Asymptote executable |
-| `asymptote.searchPaths` | `string[]` | `[]` | Additional directories to search for `import`/`include`/`access` resolution |
+| `asymptote.searchPaths` | `string[]` | `[]` | Additional directories searched for `import`/`include`/`access` resolution |
+| `asymptote.compile.outputFormat` | `enum` | `"svg"` | Output format: `svg`, `pdf`, `png` |
+| `asymptote.compile.render` | `number` | `4` | PNG raster resolution in px/bp (1–16). SVG/PDF ignore this. Recommended: 4–8 |
+| `asymptote.compile.outputDir` | `string` | `""` | Output directory. Empty = same as source file |
+| `asymptote.compile.autoCompile` | `boolean` | `false` | Auto-compile on save |
+| `asymptote.compile.openPreview` | `boolean` | `true` | Open preview after successful compilation |
+| `asymptote.compile.extraArgs` | `string[]` | `[]` | Extra command-line arguments passed to `asy` |
 | `asymptote.formatting.braceStyle` | `enum` | `"kr"` | Brace style: `"kr"` (same line) or `"allman"` (new line) |
-| `asymptote.formatting.indentSize` | `number` | `2` | Spaces per indentation level (1–8) |
+| `asymptote.formatting.indentSize` | `number` | `2` | Spaces per indent (1–8) |
 | `asymptote.formatting.insertSpaces` | `boolean` | `true` | Spaces (`true`) or tabs (`false`) |
 | `asymptote.formatting.pathExpressionSpacing` | `enum` | `"spaced"` | `"compact"` or `"spaced"` for `..`, `--`, `---` operators |
 
 ### Search Paths
 
-The `asymptote.searchPaths` setting is critical for module resolution. The extension searches for `.asy` files in the following order:
+The extension resolves `import`/`include`/`access` paths in this order:
 
-1. **Workspace folders** — the root directories of your VS Code workspace
-2. **User-configured paths** — from `asymptote.searchPaths` (supports `~` for home directory and `${VAR}` environment variable expansion)
-3. **`ASYMPTOTE_HOME` or `~/.asy`** — user's Asymptote configuration directory
-4. **Current file's directory** — where the `.asy` file being edited is located
+1. **Workspace folders** — your VS Code workspace roots
+2. **User-configured paths** — from `asymptote.searchPaths` (supports `~` and `${VAR}` expansion)
+3. **`ASYMPTOTE_HOME` or `~/.asy`** — Asymptote user config directory
+4. **Current file's directory**
 
-When searching for a module (e.g., `import graph;`), the extension looks for `<module>.asy` in each directory. Dot-notation (e.g., `import dir.mod;`) maps to `dir/mod.asy`.
-
-Additionally, all files matching `plain_*.asy` are automatically indexed as implicit imports (matching Asymptote's `private import plain;` behavior).
-
-**Example: pointing to a local Asymptote installation:**
-
-```json
-{
-  "asymptote.searchPaths": [
-    "/usr/local/texlive/2022/texmf-dist/asymptote/base"
-  ]
-}
-```
-
-## Semantic Token Configuration
-
-### Full featured setup
-
-```json
-{
-  "editor.semanticHighlighting.enabled": true,
-  "editor.semanticTokenColorCustomizations": {
-    "enabled": true,
-    "rules": {
-      "function.declaration": { "foreground": "#569CD6", "fontStyle": "bold" },
-      "function.defaultLibrary": { "foreground": "#DCDCAA" },
-      "type.declaration": { "foreground": "#4EC9B0", "fontStyle": "bold" },
-      "type.defaultLibrary": { "foreground": "#4EC9B0" },
-      "parameter": { "fontStyle": "italic" },
-      "variable.readonly": { "foreground": "#CE9178" },
-      "namespace.declaration": { "fontStyle": "bold" }
-    }
-  }
-}
-```
-
-### Minimal setup (bold definitions + italic parameters)
-
-```json
-{
-  "editor.semanticTokenColorCustomizations": {
-    "rules": {
-      "*.declaration": { "fontStyle": "bold" },
-      "parameter": { "fontStyle": "italic" }
-    }
-  }
-}
-```
-
-### Available Semantic Token Selectors
-
-| Selector | What it highlights |
-|---|---|
-| `function.declaration` | Function definitions (e.g., `void draw(...)`) |
-| `function.defaultLibrary` | Built-in function names (`draw`, `fill`, `sin`, `Arrow`, etc.) |
-| `type.declaration` | User-defined struct names used as types |
-| `type.defaultLibrary` | Built-in type names (`int`, `real`, `pair`, `path`, etc.) |
-| `parameter` | Function parameters |
-| `variable.readonly` | Constants (`pi`, `true`, `false`, `IgnoreAspect`, `N`, `S`, etc.) |
-| `variable` | Regular variables |
-| `namespace.declaration` | Struct definitions (`struct Point`) |
-| `*.declaration` | Wildcard: any token at its definition site |
-| `*.readonly` | Wildcard: any read-only token |
-| `*.defaultLibrary` | Wildcard: any built-in / standard library token |
-
-Applicable style properties:
-
-| Property | Values |
-|---|---|
-| `"foreground"` | Hex color: `"#RRGGBB"` |
-| `"fontStyle"` | `"bold"`, `"italic"`, `"underline"`, `"strikethrough"`, or combined: `"bold italic"` |
-
----
+All `plain_*.asy` files found in search paths are automatically indexed as implicit imports (matching `private import plain;` behavior).
 
 ## Development
 
@@ -251,38 +148,23 @@ Applicable style properties:
 - [Node.js](https://nodejs.org/) >= 18
 - [Visual Studio Code](https://code.visualstudio.com/) >= 1.85
 
-### Project Structure
-
-```
-AsyLsp/
-├── client/          # VS Code extension (activates the language server)
-│   └── src/extension.ts
-├── server/          # Language server (LSP implementation)
-│   └── src/server.ts
-├── syntaxes/        # TextMate grammar for syntax highlighting
-├── snippets/        # Code snippets
-└── package.json     # Extension manifest (root)
-```
-
-### Build
+### Build & Run
 
 ```bash
 cd client && npm install && npm run compile
 cd ../server && npm install && npm run compile
 ```
 
-Or in VS Code: `Ctrl+Shift+B` → **compile all**.
+Press **F5** in VS Code to launch the extension in a development host.
 
 ### Debug
 
-Press **F5** → launches the Extension Development Host with the extension loaded.
-
 | Config | Purpose |
 |---|---|
-| **Launch Extension** | Opens a new VS Code window with this extension |
+| **Launch Extension** | Opens a new VS Code window with this extension loaded |
 | **Attach to Server** | Attaches Node.js debugger to port 6009 |
 
-Set `"asymptote.trace.server": "verbose"` to log all LSP messages to the Output panel.
+Set `"asymptote.trace.server": "verbose"` to log LSP messages to the Output panel.
 
 ## License
 
