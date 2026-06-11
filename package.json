@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "asy",
   "license": "MIT",
+  "icon": "logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/doombeaker/AsyLsp"
@@ -132,7 +133,11 @@
         },
         "asymptote.compile.outputFormat": {
           "type": "string",
-          "enum": ["svg", "pdf", "png"],
+          "enum": [
+            "svg",
+            "pdf",
+            "png"
+          ],
           "default": "svg",
           "description": "Output format for compilation. SVG is recommended for inline preview."
         },
@@ -155,7 +160,9 @@
         },
         "asymptote.compile.extraArgs": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Extra command-line arguments to pass to asy (e.g., ['-render=4'])."
         },
@@ -172,5 +179,8 @@
         "path": "./snippets/asymptote.json"
       }
     ]
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.9.2"
   }
 }

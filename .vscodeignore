@@ -1,12 +1,13 @@
-src/**
-node_modules/**
+**/src/**
 .git/**
-.omo/**
+**/.omo/**
 examples/**
 .vscode/**
+asymptote*/
 *.vsix
 *.md
 !README.md
-package-lock.json
+!LICENSE
+**/package-lock.json
 **/tsconfig.json
 **/*.map
