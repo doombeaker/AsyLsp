@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 import {
@@ -37,6 +38,8 @@ import {
   PrepareRenameParams,
   RenameParams,
   TextDocumentPositionParams,
+  FoldingRange,
+  FoldingRangeRequest,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
@@ -181,6 +184,7 @@ connection.onInitialize((params: InitializeParams) => {
       referencesProvider: true,
       colorProvider: true,
       renameProvider: { prepareProvider: true },
+      foldingRangeProvider: true,
     },
   };
 
@@ -219,6 +223,7 @@ connection.onInitialized(() => {
 // ========== CONFIGURATION CHANGE ==========
 
 connection.onDidChangeConfiguration((change) => {
+  if (!change || !change.settings) return;
   const asySettings = (change.settings.asymptote || {}) as Partial<AsymptoteSettings>;
   if (asySettings.searchPaths !== undefined) {
     globalSettings.searchPaths = asySettings.searchPaths;
@@ -264,6 +269,8 @@ function arraysEqual(a: string[], b: string[]): boolean {
 
 documents.onDidClose((e) => {
   documentSettings.delete(e.document.uri);
+  localSymbolCache.delete(e.document.uri);
+  importedSymbolCache.delete(e.document.uri);
 });
 
 // ========== HOVER PROVIDER ==========
@@ -359,9 +366,11 @@ connection.onCompletion((params): CompletionItem[] => {
   const offset = document.offsetAt(params.position);
   const lineText = getLineText(document, params.position.line);
   const charBeforeCursor = offset > 0 ? text[offset - 1] : "";
+  //connection.console.log(`[completion] trigger charBefore="${charBeforeCursor}" line="${lineText.trim().slice(0,60)}"`);
 
   // ===== IMPORT COMPLETION (standard library modules) =====
   if (isAfterImport(lineText)) {
+    connection.console.log("[completion] → import path");
     return getModuleCompletions();
   }
 
@@ -372,7 +381,13 @@ connection.onCompletion((params): CompletionItem[] => {
 
   // ===== DOT COMPLETION (member access) =====
   if (charBeforeCursor === ".") {
-    return getMemberCompletions(text, offset);
+    connection.console.log("[completion] → dot (charBefore)");
+    return getMemberCompletions(document, text, offset);
+  }
+  const dotIdx = text.substring(0, offset).lastIndexOf(".");
+  if (dotIdx > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(text.substring(dotIdx + 1, offset))) {
+    connection.console.log("[completion] → dot (inline)");
+    return getMemberCompletions(document, text, offset);
   }
 
   // ===== PAREN COMPLETION =====
@@ -382,9 +397,13 @@ connection.onCompletion((params): CompletionItem[] => {
 
   // ===== SPACE COMPLETION =====
   if (shouldProvideCompletions(lineText, charBeforeCursor)) {
-    return getAllCompletions();
+    connection.console.log("[completion] → space/free, calling getAllCompletions");
+    const all = getAllCompletions(document);
+    connection.console.log(`[completion] getAllCompletions → ${all.length} items`);
+    return all;
   }
 
+  connection.console.log("[completion] → fallthrough (no completions)");
   return [];
 });
 
@@ -561,6 +580,7 @@ function tokenizeSemantic(
   builder: SemanticTokensBuilder
 ): void {
   const defs = collectDefinitions(document);
+  buildStructIndex(document);
   const text = document.getText();
   const len = text.length;
   let i = 0;
@@ -667,7 +687,7 @@ function tokenizeSemantic(
       } else if (builtinFuncSet.has(word)) {
         tt = TOKEN_FUNCTION;
         mods = MOD_DEFAULTLIB;
-      } else if (defs.structs.has(word)) {
+      } else if (defs.structs.has(word) || structIndex.has(word)) {
         tt = TOKEN_TYPE;
         mods = MOD_DECLARATION;
       } else if (defs.functions.has(word)) {
@@ -921,6 +941,39 @@ function findAllReferences(
   return results;
 }
 
+connection.onRequest(FoldingRangeRequest.type, (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+  const text = document.getText();
+  const ranges: FoldingRange[] = [];
+  const stack: { line: number; startChar: number }[] = [];
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") {
+      const pos = document.positionAt(i);
+      stack.push({ line: pos.line, startChar: pos.character });
+    } else if (text[i] === "}" && stack.length > 0) {
+      const start = stack.pop()!;
+      const pos = document.positionAt(i);
+      if (start.line !== pos.line) {
+        ranges.push({ startLine: start.line, endLine: pos.line });
+      }
+    } else if (text.substring(i, i + 2) === "/*") {
+      const startPos = document.positionAt(i);
+      const end = text.indexOf("*/", i + 2);
+      if (end !== -1) {
+        const endPos = document.positionAt(end);
+        if (startPos.line !== endPos.line) {
+          ranges.push({ startLine: startPos.line, endLine: endPos.line });
+        }
+        i = end + 1;
+      }
+    }
+  }
+
+  return ranges;
+});
+
 // Make the text document manager listen on the connection
 // for open, change, and close text document events
 documents.listen(connection);
@@ -928,17 +981,168 @@ documents.listen(connection);
 // Listen on the connection
 connection.listen();
 
+// ========== STRUCT INDEX & TYPE INFERENCE ==========
+
+interface StructMember {
+  name: string;
+  type: string;
+}
+
+const structIndex = new Map<string, StructMember[]>();
+const structIndexCache = new Map<string, number>();
+
+function parseStructBodies(text: string): Map<string, StructMember[]> {
+  const result = new Map<string, StructMember[]>();
+  const kwSet = new Set(["if","else","for","while","return","break","continue","unravel","from","import","access","using","typedef","new"]);
+  let i = 0;
+  while ((i = text.indexOf("struct", i)) !== -1) {
+    if (i > 0 && /[A-Za-z0-9_]/.test(text[i - 1])) { i += 6; continue; }
+    let j = i + 6;
+    while (j < text.length && /[ \t]/.test(text[j])) j++;
+    if (j >= text.length || !/[A-Za-z_]/.test(text[j])) { i++; continue; }
+    const idStart = j;
+    while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++;
+    const name = text.slice(idStart, j);
+    if (name === "typedef") { i = j; continue; }
+    const braceStart = text.indexOf("{", j);
+    if (braceStart === -1) { i = j; continue; }
+    let depth = 0;
+    let k = braceStart;
+    for (; k < text.length; k++) {
+      if (text[k] === "{") depth++;
+      else if (text[k] === "}") { depth--; if (depth === 0) break; }
+      else if (text[k] === '"' || text[k] === "'") {
+        const q = text[k]; k++;
+        while (k < text.length && text[k] !== q) { if (text[k] === "\\") k++; k++; }
+      }
+      else if (text[k] === "/" && k + 1 < text.length) {
+        if (text[k + 1] === "/") { while (k < text.length && text[k] !== "\n") k++; }
+        else if (text[k + 1] === "*") { k += 2; while (k + 1 < text.length && !(text[k] === "*" && text[k + 1] === "/")) k++; k++; }
+      }
+    }
+    if (k >= text.length) { i = braceStart + 1; continue; }
+    const body = text.slice(braceStart + 1, k);
+    const members = parseStructMembers(body, name, kwSet);
+    result.set(name, members);
+    i = k + 1;
+  }
+  return result;
+}
+
+function parseStructMembers(body: string, structName: string, kwSet: Set<string>): StructMember[] {
+  const members: StructMember[] = [];
+  let i = 0;
+  while (i < body.length) {
+    while (i < body.length && /[ \t\n\r]/.test(body[i])) i++;
+    if (i >= body.length) break;
+    if (body[i] === "/" && i + 1 < body.length) {
+      if (body[i + 1] === "/") { i += 2; while (i < body.length && body[i] !== "\n") i++; continue; }
+      if (body[i + 1] === "*") { i += 2; while (i + 1 < body.length && !(body[i] === "*" && body[i + 1] === "/")) i++; i += 2; continue; }
+    }
+    if (body[i] === "{") { let d = 1; i++; while (i < body.length && d > 0) { if (body[i] === "{") d++; else if (body[i] === "}") d--; i++; } continue; }
+    if (body[i] === ";") { i++; continue; }
+    const lineMatch = body.slice(i).match(/^([^\n]*)/);
+    if (!lineMatch) { i++; continue; }
+    const line = lineMatch[1].trim();
+    if (!line) { i++; continue; }
+    const firstWord = line.split(/\s+/)[0];
+    if (kwSet.has(firstWord)) { i += lineMatch[0].length + 1; continue; }
+    if (firstWord === "struct" || (firstWord === "void" && line.includes("operator"))) { i += lineMatch[0].length + 1; continue; }
+    if (firstWord === "typedef") { i += lineMatch[0].length + 1; continue; }
+    const declMatch = line.match(/^(?:(?:public|private|restricted|static|explicit|autounravel)\s+)*([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*)(?:\[\])?\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|=)/);
+    if (declMatch) {
+      const mType = declMatch[1];
+      const mName = declMatch[2];
+      if (mName !== structName) {
+        members.push({ name: mName, type: mType });
+      }
+    }
+    i += lineMatch[0].length + 1;
+  }
+  return members;
+}
+
+function buildStructIndex(document: TextDocument): void {
+  const searchPath = buildSearchPath(document);
+  for (const dir of searchPath) {
+    const scanDirs = [dir, path.join(dir, "base")];
+    for (const d of scanDirs) {
+      if (!fs.existsSync(d)) continue;
+      try {
+        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+          const fp = path.join(d, entry.name);
+          if (entry.isFile() && entry.name.endsWith(".asy")) {
+            indexFile(fp);
+          } else if (entry.isDirectory()) {
+            try {
+              for (const se of fs.readdirSync(fp, { withFileTypes: true })) {
+                if (se.isFile() && se.name.endsWith(".asy")) {
+                  indexFile(path.join(fp, se.name));
+                }
+              }
+            } catch { /* skip */ }
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+}
+
+function indexFile(fp: string): void {
+  try {
+    const stat = fs.statSync(fp);
+    const cached = structIndexCache.get(fp);
+    if (cached === stat.mtimeMs) return;
+    structIndexCache.set(fp, stat.mtimeMs);
+    const content = fs.readFileSync(fp, "utf-8");
+    const structs = parseStructBodies(content);
+    for (const [name, members] of structs) {
+      if (!structIndex.has(name) || members.length > 0) {
+        structIndex.set(name, members);
+      }
+    }
+  } catch { /* skip */ }
+}
+
+function resolveVariableType(document: TextDocument, varName: string): string | null {
+  const text = document.getText();
+  const escaped = escapeRegex(varName);
+  const regex = new RegExp(
+    "(?:^|;|\\{|\\})\\s*" +
+    "((?:public|private|restricted|static|explicit|autounravel)\\s+)*" +
+    "([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)*)\\s+" +
+    "(" + escaped + ")\\b",
+    "gm"
+  );
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    const t = m[2];
+    if (t && t !== "for" && t !== "while" && t !== "if" && t !== "else" && t !== "return") {
+      return t;
+    }
+  }
+  return null;
+}
+
+function getStructMembers(typeName: string): StructMember[] {
+  const builtins: Record<string, StructMember[]> = {
+    pair: [{name:"x",type:"real"},{name:"y",type:"real"}],
+    triple: [{name:"x",type:"real"},{name:"y",type:"real"},{name:"z",type:"real"}],
+    transform: [{name:"x",type:"real"},{name:"y",type:"real"},
+      {name:"xx",type:"real"},{name:"xy",type:"real"},{name:"yx",type:"real"},{name:"yy",type:"real"}],
+  };
+  if (builtins[typeName]) return builtins[typeName];
+  return structIndex.get(typeName) || [];
+}
+
 // ========== HELPER FUNCTIONS ==========
 
 function getLineText(document: TextDocument, line: number): string {
-  const lineRange = {
-    start: { line, character: 0 },
-    end: { line, character: document.getText().split("n")[line]?.length || 0 },
-  };
-  const rangeStr = `${lineRange.start.line}:${lineRange.start.character}-${lineRange.end.line}:${lineRange.end.character}`;
+  const text = document.getText();
+  const lines = text.split("\n");
   return document.getText({
     start: Position.create(line, 0),
-    end: Position.create(line, lineRange.end.character),
+    end: Position.create(line, lines[line]?.length || 0),
   });
 }
 
@@ -981,30 +1185,20 @@ function isAfterInclude(lineText: string): boolean {
 
 function shouldProvideCompletions(
   lineText: string,
-  charBefore: string
+  _charBefore: string
 ): boolean {
   const trimmed = lineText.trimStart();
-  // Don't provide completions inside comments
   if (/^\/\//.test(trimmed)) return false;
-
-  // Provide after newline or space at start of statement
-  if (!charBefore || charBefore === " ") {
-    // Skip if we're after a dot operator
-    const lastDot = lineText.lastIndexOf(".");
-    const lastSpace = lineText.lastIndexOf(" ");
-    if (lastDot > lastSpace) return false;
-    return true;
-  }
-
-  // After a delimiter
-  if ([ ",", ";", "{", "}", "[", "]" ].includes(charBefore)) {
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
-function getAllCompletions(): CompletionItem[] {
+// Pre-built static completion items (never change — built once at startup)
+let cachedStaticCompletions: CompletionItem[] | null = null;
+const controlFlowLabelSet = new Set(controlFlowKeywords.map((k) => k.label));
+
+function getStaticCompletions(): CompletionItem[] {
+  if (cachedStaticCompletions) return cachedStaticCompletions;
+
   const items: CompletionItem[] = [];
 
   // Keywords (as snippets)
@@ -1018,9 +1212,9 @@ function getAllCompletions(): CompletionItem[] {
     });
   }
 
-  // Other keywords
+  // Other keywords (skip ones already covered by controlFlowKeywords)
   for (const kw of keywords) {
-    if (!controlFlowKeywords.find((k) => k.label === kw)) {
+    if (!controlFlowLabelSet.has(kw)) {
       items.push({
         label: kw,
         kind: CompletionItemKind.Keyword,
@@ -1058,18 +1252,51 @@ function getAllCompletions(): CompletionItem[] {
     });
   }
 
+  cachedStaticCompletions = items;
   return items;
 }
 
-function getMemberCompletions(text: string, offset: number): CompletionItem[] {
-  // Get the word before the dot
-  const beforeDot = text.substring(0, offset - 1);
+const localSymbolCache = new Map<string, { version: number; items: CompletionItem[] }>();
+const importedSymbolCache = new Map<string, { version: number; items: CompletionItem[] }>();
+
+function getAllCompletions(document: TextDocument): CompletionItem[] {
+  const staticItems = getStaticCompletions();
+  const docKey = document.uri;
+  const docVersion = document.version;
+
+  const localCached = localSymbolCache.get(docKey);
+  let localItems: CompletionItem[];
+  if (localCached && localCached.version === docVersion) {
+    localItems = localCached.items;
+  } else {
+    localItems = getLocalSymbolCompletions(document);
+    localSymbolCache.set(docKey, { version: docVersion, items: localItems });
+  }
+
+  const importCached = importedSymbolCache.get(docKey);
+  let importedItems: CompletionItem[];
+  if (importCached && importCached.version === docVersion) {
+    connection.console.log(`[getAllCompletions] import cache HIT (version=${docVersion})`);
+    importedItems = importCached.items;
+  } else {
+    connection.console.log(`[getAllCompletions] import cache MISS (version=${docVersion}), calling getImportedSymbolCompletions`);
+    importedItems = getImportedSymbolCompletions(document);
+    importedSymbolCache.set(docKey, { version: docVersion, items: importedItems });
+  }
+
+  const result = staticItems.concat(localItems).concat(importedItems);
+  connection.console.log(`[getAllCompletions] total items: static=${staticItems.length} local=${localItems.length} imported=${importedItems.length} → ${result.length}`);
+  return result;
+}
+
+function getMemberCompletions(document: TextDocument, text: string, offset: number): CompletionItem[] {
+  const dotPos = text.lastIndexOf(".", offset - 1);
+  if (dotPos === -1) return [];
+  const beforeDot = text.substring(0, dotPos);
   const wordMatch = beforeDot.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/);
   if (!wordMatch) return [];
-
   const objName = wordMatch[1];
 
-  // Check known type members
   if (typeMemberMap[objName]) {
     return typeMemberMap[objName].map((m) => ({
       label: m.label,
@@ -1078,23 +1305,34 @@ function getMemberCompletions(text: string, offset: number): CompletionItem[] {
     }));
   }
 
-  // Check if objName is a known type
-  const builtinType = builtinTypes.find((t) => t.label === objName);
-  if (builtinType) {
-    return [];
+  if (builtinTypes.find((t) => t.label === objName)) return [];
+
+  buildStructIndex(document);
+  const varType = resolveVariableType(document, objName);
+  connection.console.log(`[completion] dot obj=${objName} varType=${varType || "null"} structIdxHas_obj=${structIndex.has(objName)} structIdxHas_type=${structIndex.has(varType || "")} structIdxSize=${structIndex.size}`);
+  if (varType) {
+    const members = getStructMembers(varType);
+    connection.console.log(`[dot] type=${varType} members=${members.length} names=[${members.map(m=>m.name).join(",")}]`);
+    if (members.length > 0) {
+      return members.map((m) => ({
+        label: m.name,
+        kind: CompletionItemKind.Field,
+        detail: `${m.name}: ${m.type}`,
+      }));
+    }
   }
 
-  // Generic array members (if variable name suggests array)
-  if (
-    objName.endsWith("[]") ||
-    objName.toLowerCase().includes("array") ||
-    objName.toLowerCase().includes("list")
-  ) {
-    return arrayMembers.map((m) => ({
-      label: m.label,
-      kind: CompletionItemKind.Method,
-      detail: m.detail,
+  const structMembers = getStructMembers(objName);
+  if (structMembers.length > 0) {
+    return structMembers.map((m) => ({
+      label: m.name,
+      kind: CompletionItemKind.Field,
+      detail: `${m.name}: ${m.type}`,
     }));
+  }
+
+  if (objName.endsWith("[]") || objName.toLowerCase().includes("array") || objName.toLowerCase().includes("list")) {
+    return arrayMembers.map((m) => ({ label: m.label, kind: CompletionItemKind.Method, detail: m.detail }));
   }
 
   return [];
@@ -1179,7 +1417,7 @@ function findSymbolDefinition(
 
   // Look for variable declarations: "type ident" or "type ident = ..."
   const declRegex = new RegExp(
-    `\\b(${builtinTypes.map((t) => t.label).join("|")}|[A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)\\s+(${escapeRegex(word)})\\b`,
+    `\\b(${builtinTypes.map((t) => t.label).join("|")}|[A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\\[\\])?\\s+(${escapeRegex(word)})\\b`,
     "g"
   );
 
@@ -1243,15 +1481,20 @@ function resolveModuleFile(
     moduleName,
   ];
 
+  connection.console.log(`[resolveModule] searching "${moduleName}" in searchPath=[${searchPath.join(", ")}]`);
+  connection.console.log(`[resolveModule] candidates=[${candidates.join(", ")}]`);
+
   for (const dir of searchPath) {
     for (const candidate of candidates) {
       const fullPath = path.join(dir, candidate);
       if (fs.existsSync(fullPath)) {
+        connection.console.log(`[resolveModule] FOUND: ${fullPath}`);
         return fullPath;
       }
     }
   }
 
+  connection.console.log(`[resolveModule] NOT FOUND: "${moduleName}"`);
   return null;
 }
 
@@ -1346,7 +1589,7 @@ function findSymbolInFile(
   if (results.length > 0) return results;
 
   const declRegex = new RegExp(
-    `\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)\\s+(${escaped})\\b`,
+    `\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\\[\\])?\\s+(${escaped})\\b`,
     "g"
   );
   let declMatch: RegExpExecArray | null;
@@ -1395,9 +1638,34 @@ function resolveDotAccess(
   document: TextDocument
 ): Location[] | null {
   const modulePath = resolveModuleFile(objectName, document);
-  if (!modulePath) return null;
-  const results = findSymbolInFile(modulePath, symbolName);
-  return results.length > 0 ? results : null;
+  if (modulePath) {
+    const results = findSymbolInFile(modulePath, symbolName);
+    if (results.length > 0) return results;
+  }
+
+  buildStructIndex(document);
+  const varType = resolveVariableType(document, objectName);
+  if (varType) {
+    const members = getStructMembers(varType);
+    if (members.some((m) => m.name === symbolName)) {
+      const importPath = resolveModuleFile(varType, document);
+      if (importPath) {
+        const results = findSymbolInFile(importPath, symbolName);
+        if (results.length > 0) return results;
+      }
+    }
+  }
+
+  const directMembers = getStructMembers(objectName);
+  if (directMembers.some((m) => m.name === symbolName)) {
+    const importPath = resolveModuleFile(objectName, document);
+    if (importPath) {
+      const results = findSymbolInFile(importPath, symbolName);
+      if (results.length > 0) return results;
+    }
+  }
+
+  return null;
 }
 
 function collectAllDefinitions(word: string, document: TextDocument): Location[] {
@@ -1422,7 +1690,7 @@ function formatDocument(
   const edits: TextEdit[] = [];
 
   let formatted = "";
-  const lines = text.split("n");
+  const lines = text.split("\n");
   let indentLevel = 0;
   const indentStr = settings.insertSpaces
     ? " ".repeat(settings.indentSize)
@@ -1517,6 +1785,78 @@ function expandPath(raw: string): string {
   return path.resolve(expanded);
 }
 
+let cachedSystemLibraryPath: string | null | undefined = undefined;
+
+function discoverAsyLibViaKpsewhich(): string | null {
+  try {
+    const texmfdist = execSync("kpsewhich -var-value=TEXMFDIST", {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    if (!texmfdist) return null;
+    const asyPath = path.join(texmfdist, "asymptote");
+    if (fs.existsSync(asyPath)) {
+      connection.console.log(`[discoverAsyLib] kpsewhich → ${asyPath}`);
+      return asyPath;
+    }
+  } catch {
+    connection.console.log("[discoverAsyLib] kpsewhich unavailable");
+  }
+  return null;
+}
+
+function discoverAsyLibViaTexliveScan(): string | null {
+  const texliveBase = "/usr/local/texlive";
+  if (!fs.existsSync(texliveBase)) return null;
+  try {
+    const years = fs.readdirSync(texliveBase, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name)
+      .sort()
+      .reverse();
+    for (const year of years) {
+      const candidate = path.join(texliveBase, year, "texmf-dist", "asymptote");
+      if (fs.existsSync(candidate)) {
+        connection.console.log(`[discoverAsyLib] texlive scan → ${candidate}`);
+        return candidate;
+      }
+    }
+  } catch {
+    connection.console.log("[discoverAsyLib] texlive scan failed");
+  }
+  return null;
+}
+
+function discoverAsyLibViaCommonPaths(): string | null {
+  const commonPaths = [
+    "/opt/homebrew/share/texmf-dist/asymptote",
+    "/usr/local/share/texmf-dist/asymptote",
+    "/usr/share/texmf-dist/asymptote",
+    "/usr/share/texlive/texmf-dist/asymptote",
+  ];
+  for (const p of commonPaths) {
+    if (fs.existsSync(p)) {
+      connection.console.log(`[discoverAsyLib] common path → ${p}`);
+      return p;
+    }
+  }
+  return null;
+}
+
+function getSystemLibraryPath(): string | null {
+  if (cachedSystemLibraryPath !== undefined) return cachedSystemLibraryPath;
+
+  cachedSystemLibraryPath =
+    discoverAsyLibViaKpsewhich() ??
+    discoverAsyLibViaTexliveScan() ??
+    discoverAsyLibViaCommonPaths();
+
+  if (!cachedSystemLibraryPath) {
+    connection.console.log("[discoverAsyLib] system library not found");
+  }
+  return cachedSystemLibraryPath;
+}
+
 function buildSearchPath(document: TextDocument): string[] {
   const paths: string[] = [];
 
@@ -1526,6 +1866,11 @@ function buildSearchPath(document: TextDocument): string[] {
 
   for (const sp of globalSettings.searchPaths) {
     paths.push(expandPath(sp));
+  }
+
+  const sysLib = getSystemLibraryPath();
+  if (sysLib) {
+    paths.push(sysLib);
   }
 
   const asyHome = process.env.ASYMPTOTE_HOME || path.join(os.homedir(), ".asy");
@@ -1684,3 +2029,116 @@ function getModuleCompletions(): CompletionItem[] {
 
   return items;
 }
+
+function getLocalSymbolCompletions(document: TextDocument): CompletionItem[] {
+  connection.console.log("[completion] getLocalSymbolCompletions called");
+  const text = document.getText();
+  const seen = new Set(keywords);
+  for (const t of builtinTypes) seen.add(t.label);
+  for (const f of builtinFunctions) seen.add(f.label);
+  for (const c of constants) seen.add(c.label);
+
+  const items: CompletionItem[] = [];
+  const declRegex = /\b([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\[\])?(?:\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)?\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|=|\s*\()/g;
+  let m: RegExpExecArray | null;
+  while ((m = declRegex.exec(text)) !== null) {
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const hasParams = text[m.index + m[0].length - 1] === '(';
+    items.push({
+      label: name,
+      kind: hasParams ? CompletionItemKind.Function : CompletionItemKind.Variable,
+    });
+  }
+  return items;
+}
+
+function extractModuleDeclarations(content: string, seen: Set<string>): CompletionItem[] {
+  const items: CompletionItem[] = [];
+
+  const structRegex = /struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = structRegex.exec(content)) !== null) {
+    const name = m[1];
+    if (!seen.has(name)) {
+      seen.add(name);
+      items.push({ label: name, kind: CompletionItemKind.Struct });
+    }
+  }
+
+  const declRegex = /\b([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\[\])?(?:\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)?\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|=|\s*\()/g;
+  while ((m = declRegex.exec(content)) !== null) {
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const hasParams = content[m.index + m[0].length - 1] === '(';
+    items.push({
+      label: name,
+      kind: hasParams ? CompletionItemKind.Function : CompletionItemKind.Variable,
+    });
+  }
+
+  return items;
+}
+
+function getImportedSymbolCompletions(document: TextDocument): CompletionItem[] {
+  const items: CompletionItem[] = [];
+  const seen = new Set<string>();
+
+  for (const kw of keywords) seen.add(kw);
+  for (const t of builtinTypes) seen.add(t.label);
+  for (const f of builtinFunctions) seen.add(f.label);
+  for (const c of constants) seen.add(c.label);
+
+  const importedModules = getDocumentImports(document);
+  connection.console.log(`[import-completion] imports detected: [${importedModules.join(", ")}]`);
+
+  for (const moduleName of importedModules) {
+    connection.console.log(`[import-completion] processing module: "${moduleName}"`);
+
+    const stdModule = standardLibraryModules.find(m => m.name === moduleName);
+    if (stdModule && stdModule.exports) {
+      connection.console.log(`[import-completion]   → stdlib exports: [${stdModule.exports.join(", ")}]`);
+      let added = 0;
+      for (const exp of stdModule.exports) {
+        if (!seen.has(exp)) {
+          seen.add(exp);
+          items.push({
+            label: exp,
+            kind: CompletionItemKind.Function,
+            detail: `${moduleName} module`,
+          });
+          added++;
+        }
+      }
+      connection.console.log(`[import-completion]   → added ${added} new symbols from exports`);
+      continue;
+    }
+
+    const moduleFile = resolveModuleFile(moduleName, document);
+    if (!moduleFile) {
+      connection.console.log(`[import-completion]   → resolveModuleFile returned null (file not found)`);
+      continue;
+    }
+    connection.console.log(`[import-completion]   → resolved file: ${moduleFile}`);
+
+    try {
+      const content = fs.readFileSync(moduleFile, "utf-8");
+      connection.console.log(`[import-completion]   → file size: ${content.length} chars`);
+      const decls = extractModuleDeclarations(content, seen);
+      connection.console.log(`[import-completion]   → extractModuleDeclarations returned ${decls.length} items: [${decls.map(d=>d.label).slice(0,20).join(", ")}${decls.length > 20 ? ", ..." : ""}]`);
+      for (const d of decls) {
+        d.detail = `${moduleName} module`;
+        items.push(d);
+      }
+      connection.console.log(`[import-completion]   → added ${decls.length} symbols`);
+    } catch (e: unknown) {
+      connection.console.log(`[import-completion]   → read/parse error: ${e instanceof Error ? e.message : "unknown"}`);
+    }
+  }
+
+  connection.console.log(`[import-completion] total imported symbols: ${items.length}`);
+  return items;
+}
+

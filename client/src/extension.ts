@@ -15,6 +15,9 @@ import {
   Range,
   Position,
   ConfigurationTarget,
+  StatusBarItem,
+  StatusBarAlignment,
+  ThemeColor,
 } from "vscode";
 import {
   LanguageClient,
@@ -26,6 +29,10 @@ import {
 let client: LanguageClient;
 const outputChannel = window.createOutputChannel("Asymptote");
 const diagnosticCollection = languages.createDiagnosticCollection("asymptote");
+const statusBarItem = window.createStatusBarItem(StatusBarAlignment.Right, 100);
+statusBarItem.command = "asymptote.preview";
+statusBarItem.text = "$(output) Asymptote";
+statusBarItem.tooltip = "Asymptote: Compile (click to preview)";
 
 export function activate(context: ExtensionContext) {
   // === LSP Server ===
@@ -77,6 +84,7 @@ export function activate(context: ExtensionContext) {
   );
 
   client.start();
+  statusBarItem.show();
 
   // === Compile Command ===
   context.subscriptions.push(
@@ -210,6 +218,9 @@ function compileDocument(document: { uri: Uri; getText(): string; fileName: stri
 
   diagnosticCollection.clear();
 
+  statusBarItem.text = "$(sync~spin) Asymptote: compiling...";
+  statusBarItem.backgroundColor = undefined;
+
   const proc = cp.spawn(asyPath, args);
 
   let stderr = "";
@@ -228,16 +239,22 @@ function compileDocument(document: { uri: Uri; getText(): string; fileName: stri
     }
 
     if (code === 0) {
+      statusBarItem.text = "$(check) Asymptote";
+      statusBarItem.backgroundColor = undefined;
       outputChannel.appendLine(`[OK] Compiled to ${outName}.${format}`);
       if (workspace.getConfiguration("asymptote.compile").get("openPreview", true)) {
         previewDocument(outName, format);
       }
     } else {
+      statusBarItem.text = "$(error) Asymptote";
+      statusBarItem.backgroundColor = new ThemeColor("statusBarItem.errorBackground");
       outputChannel.appendLine(`[FAIL] asy exited with code ${code}`);
     }
   });
 
   proc.on("error", (err: Error) => {
+    statusBarItem.text = "$(error) Asymptote";
+    statusBarItem.backgroundColor = new ThemeColor("statusBarItem.errorBackground");
     outputChannel.appendLine(`[ERROR] Failed to launch asy: ${err.message}`);
     window.showErrorMessage(`Failed to launch asy: ${err.message}. Check asymptote.asyPath setting.`);
   });
