@@ -782,10 +782,74 @@ connection.onDocumentColor((params) => {
     });
   }
 
+  const cmykRegex = /cmyk\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)/g;
+  let ck: RegExpExecArray | null;
+  while ((ck = cmykRegex.exec(text)) !== null) {
+    const c_ = parseFloat(ck[1]), m = parseFloat(ck[2]), y = parseFloat(ck[3]), k = parseFloat(ck[4]);
+    const rr = 1 - Math.min(1, c_ + k);
+    const gg = 1 - Math.min(1, m + k);
+    const bb = 1 - Math.min(1, y + k);
+    const pos = document.positionAt(ck.index);
+    colors.push({
+      range: { start: pos, end: document.positionAt(ck.index + ck[0].length) },
+      color: Color.create(rr, gg, bb, 1),
+    });
+  }
+
+  const grayRegex = /\bgray\(\s*([0-9.]+)\s*\)/g;
+  let gk: RegExpExecArray | null;
+  while ((gk = grayRegex.exec(text)) !== null) {
+    const gv = parseFloat(gk[1]);
+    const pos = document.positionAt(gk.index);
+    colors.push({
+      range: { start: pos, end: document.positionAt(gk.index + gk[0].length) },
+      color: Color.create(gv, gv, gv, 1),
+    });
+  }
+
   return colors;
 });
 
-connection.onColorPresentation(() => []);
+connection.onColorPresentation((params) => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const rangeText = doc.getText(params.range);
+  const m = rangeText.match(/^(rgb|cmyk|gray)\(([^)]+)\)$/);
+  if (!m) return [];
+
+  const funcName = m[1];
+  if (funcName === "rgb") return [{ label: formatRgb(params.color), textEdit: { range: params.range, newText: formatRgb(params.color) } }];
+  if (funcName === "cmyk") return [{ label: formatCmyk(params.color), textEdit: { range: params.range, newText: formatCmyk(params.color) } }];
+  if (funcName === "gray") return [{ label: formatGray(params.color), textEdit: { range: params.range, newText: formatGray(params.color) } }];
+  return [];
+});
+
+function formatRgb(c: Color): string {
+  const r = Math.round(c.red * 255) / 255;
+  const g = Math.round(c.green * 255) / 255;
+  const b = Math.round(c.blue * 255) / 255;
+  return `rgb(${r},${g},${b})`;
+}
+
+function formatCmyk(c: Color): string {
+  const r = c.red, g = c.green, b = c.blue;
+  const k = 1 - Math.max(r, g, b);
+  const denom = 1 - k || 1;
+  const ci = (1 - r - k) / denom;
+  const mi = (1 - g - k) / denom;
+  const yi = (1 - b - k) / denom;
+  return `cmyk(${r1(ci)},${r1(mi)},${r1(yi)},${r1(k)})`;
+}
+
+function formatGray(c: Color): string {
+  const gv = Math.round((c.red + c.green + c.blue) / 3 * 255) / 255;
+  return `gray(${gv})`;
+}
+
+function r1(v: number): string {
+  const f = Math.round(v * 1000) / 1000;
+  return Number.isInteger(f) ? f + ".0" : String(f);
+}
 
 // ========== RENAME PROVIDER ==========
 
