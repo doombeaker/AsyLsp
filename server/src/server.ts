@@ -366,7 +366,7 @@ connection.onCompletion((params): CompletionItem[] => {
   const offset = document.offsetAt(params.position);
   const lineText = getLineText(document, params.position.line);
   const charBeforeCursor = offset > 0 ? text[offset - 1] : "";
-  connection.console.log(`[completion] trigger charBefore="${charBeforeCursor}" line="${lineText.trim().slice(0,60)}"`);
+  //connection.console.log(`[completion] trigger charBefore="${charBeforeCursor}" line="${lineText.trim().slice(0,60)}"`);
 
   // ===== IMPORT COMPLETION (standard library modules) =====
   if (isAfterImport(lineText)) {
@@ -1138,14 +1138,11 @@ function getStructMembers(typeName: string): StructMember[] {
 // ========== HELPER FUNCTIONS ==========
 
 function getLineText(document: TextDocument, line: number): string {
-  const lineRange = {
-    start: { line, character: 0 },
-    end: { line, character: document.getText().split("n")[line]?.length || 0 },
-  };
-  const rangeStr = `${lineRange.start.line}:${lineRange.start.character}-${lineRange.end.line}:${lineRange.end.character}`;
+  const text = document.getText();
+  const lines = text.split("\n");
   return document.getText({
     start: Position.create(line, 0),
-    end: Position.create(line, lineRange.end.character),
+    end: Position.create(line, lines[line]?.length || 0),
   });
 }
 
@@ -1693,7 +1690,7 @@ function formatDocument(
   const edits: TextEdit[] = [];
 
   let formatted = "";
-  const lines = text.split("n");
+  const lines = text.split("\n");
   let indentLevel = 0;
   const indentStr = settings.insertSpaces
     ? " ".repeat(settings.indentSize)
@@ -2136,8 +2133,8 @@ function getImportedSymbolCompletions(document: TextDocument): CompletionItem[] 
         items.push(d);
       }
       connection.console.log(`[import-completion]   → added ${decls.length} symbols`);
-    } catch (e: any) {
-      connection.console.log(`[import-completion]   → read/parse error: ${e?.message || "unknown"}`);
+    } catch (e: unknown) {
+      connection.console.log(`[import-completion]   → read/parse error: ${e instanceof Error ? e.message : "unknown"}`);
     }
   }
 
