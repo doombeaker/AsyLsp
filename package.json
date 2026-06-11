@@ -2,7 +2,7 @@
   "name": "asymptote-lsp",
   "displayName": "Asymptote Language Support",
   "description": "LSP-based Asymptote language support with syntax highlighting, code completion for imported modules, real-time diagnostics, hover, go-to-definition, cross-module references, rename, formatting, and compile/preview",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "asy",
   "license": "MIT",
   "icon": "logo.png",

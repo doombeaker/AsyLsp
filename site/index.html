@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asymptote Language Support — VS Code Extension</title>
+<style>
+  :root {
+    --bg:      #0d1325;
+    --bg-card: #131c35;
+    --fg:      #d4d4d4;
+    --muted:   #8b949e;
+    --gold:    #f0c040;
+    --teal:    #26b69e;
+    --blue:    #539bf5;
+    --radius:  10px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.6;
+  }
+  .hero {
+    text-align: center; padding: 80px 24px 48px;
+  }
+  .hero svg { width: 96px; height: 96px; margin-bottom: 24px; }
+  .hero h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; }
+  .hero h1 span { color: var(--gold); }
+  .hero p  { color: var(--muted); font-size: 1.05rem; max-width: 540px; margin: 12px auto 28px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 0.95rem;
+    text-decoration: none; transition: 0.15s;
+  }
+  .btn-primary { background: var(--gold); color: #0d1325; }
+  .btn-primary:hover { background: #f5d060; }
+  .btn-secondary { background: var(--bg-card); color: var(--fg); border: 1px solid #2a3250; }
+  .btn-secondary:hover { border-color: var(--muted); }
+  .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  section { max-width: 780px; margin: 0 auto; padding: 48px 24px; }
+  section h2 { font-size: 1.4rem; font-weight: 700; margin-bottom: 24px; color: var(--gold); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--bg-card); border-radius: var(--radius); padding: 20px;
+  }
+  .card h3 { font-size: 0.95rem; margin-bottom: 6px; }
+  .card p  { color: var(--muted); font-size: 0.88rem; }
+  .card .icon { font-size: 1.4rem; margin-bottom: 8px; }
+  .steps { list-style: none; display: flex; flex-direction: column; gap: 14px; }
+  .steps li { display: flex; gap: 12px; align-items: flex-start; }
+  .steps code {
+    display: block; background: #1a2340; padding: 8px 12px; border-radius: 6px;
+    font-size: 0.85rem; margin-top: 4px;
+  }
+  footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: 0.82rem; }
+  footer a { color: var(--teal); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+    <rect width="128" height="128" rx="24" fill="#0d1325"/>
+    <circle cx="64" cy="64" r="48" fill="none" stroke="#d4d4d4" stroke-width="3.5"/>
+    <line x1="44" y1="38" x2="64" y2="94" stroke="#d4d4d4" stroke-width="8.5" stroke-linecap="round"/>
+    <line x1="84" y1="38" x2="64" y2="94" stroke="#d4d4d4" stroke-width="8.5" stroke-linecap="round"/>
+    <line x1="50" y1="57" x2="78" y2="57" stroke="#d4d4d4" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="16" cy="64" r="3.5" fill="#f0c040"/>
+    <circle cx="112" cy="64" r="3.5" fill="#f0c040"/>
+  </svg>
+  <h1><span>Asymptote</span> Language Support</h1>
+  <p>LSP-based VS Code extension for the Asymptote vector graphics language — code completion, real-time diagnostics, go-to-definition, and more.</p>
+  <div class="actions">
+    <a class="btn btn-primary" href="https://marketplace.visualstudio.com/items?itemName=asy.asymptote-lsp">Install from Marketplace</a>
+    <a class="btn btn-secondary" href="https://github.com/doombeaker/AsyLsp">View on GitHub</a>
+  </div>
+</header>
+
+<section>
+  <h2>Features</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="icon">&#x2728;</div>
+      <h3>Code Completion</h3>
+      <p>Built-in types, functions, control-flow snippets, and symbols from imported modules — all at your fingertips.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f50d;</div>
+      <h3>Go-to-Definition</h3>
+      <p>Jump to definitions across imported modules. Resolves <code>import</code>, <code>include</code>, <code>access</code> statements.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x26a0;</div>
+      <h3>Real-time Diagnostics</h3>
+      <p>Unmatched brackets, unresolved imports, and optional semicolon hints — as you type, no save needed.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f3a8;</div>
+      <h3>Semantic Highlighting</h3>
+      <p>Fine-grained token coloring: functions, types, parameters, and constants — zero config.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f4dd;</div>
+      <h3>Signature Help</h3>
+      <p>Parameter hints for built-in functions — all overloaded signatures shown at a glance.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f527;</div>
+      <h3>Code Formatting</h3>
+      <p>Configurable brace style, indent size, and path expression spacing.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f4a1;</div>
+      <h3>Hover Information</h3>
+      <p>Type signatures and module sources on hover. Built-in constants and keywords documented inline.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f3af;</div>
+      <h3>Compile &amp; Preview</h3>
+      <p>One-click compilation. SVG inline preview, PDF in split view, auto-compile on save.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f6e0;</div>
+      <h3>Rename &amp; References</h3>
+      <p>Rename symbols across all files. Find all references across current file and imported modules.</p>
+    </div>
+    <div class="card">
+      <div class="icon">&#x1f308;</div>
+      <h3>Color Preview</h3>
+      <p>Inline swatches for named Asymptote colors and <code>rgb(&hellip;)</code> expressions.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Quick Start</h2>
+  <ol class="steps">
+    <li>
+      <div>
+        <strong style="color:var(--teal)">1.</strong> Install the extension from the VS Code Marketplace.
+        <code>ext install asy-lsp.asymptote-lsp</code>
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong style="color:var(--teal)">2.</strong> Open or create a <code>.asy</code> file — syntax highlighting and completions activate automatically.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong style="color:var(--teal)">3.</strong> Import a standard library module — its symbols will be available in autocomplete.
+        <code>import drawtree;</code>
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong style="color:var(--teal)">4.</strong> Press <strong>F12</strong> to jump to definitions, <strong>F2</strong> to rename, <strong>Shift+Alt+F</strong> to format.
+      </div>
+    </li>
+  </ol>
+</section>
+
+<section>
+  <h2>Settings</h2>
+  <div class="grid">
+    <div class="card">
+      <h3><code>asymptote.searchPaths</code></h3>
+      <p>Additional import search directories. Automatic system library discovery via <code>kpsewhich</code>.</p>
+    </div>
+    <div class="card">
+      <h3><code>asymptote.asyPath</code></h3>
+      <p>Path to the <code>asy</code> executable for compilation and preview.</p>
+    </div>
+    <div class="card">
+      <h3><code>asymptote.compile.outputFormat</code></h3>
+      <p>Output format: <code>svg</code>, <code>pdf</code>, or <code>png</code>. SVG is recommended.</p>
+    </div>
+    <div class="card">
+      <h3><code>asymptote.formatting.*</code></h3>
+      <p>Brace style, indent size, tabs vs spaces, path expression spacing.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p><a href="https://github.com/doombeaker/AsyLsp">GitHub</a> &middot; <a href="https://marketplace.visualstudio.com/items?itemName=asy.asymptote-lsp">Marketplace</a> &middot; MIT License</p>
+</footer>
+
+</body>
+</html>
