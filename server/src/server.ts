@@ -1385,7 +1385,7 @@ function findSymbolDefinition(
 
   // Look for variable declarations: "type ident" or "type ident = ..."
   const declRegex = new RegExp(
-    `\\b(${builtinTypes.map((t) => t.label).join("|")}|[A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)\\s+(${escapeRegex(word)})\\b`,
+    `\\b(${builtinTypes.map((t) => t.label).join("|")}|[A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\\[\\])?\\s+(${escapeRegex(word)})\\b`,
     "g"
   );
 
@@ -1552,7 +1552,7 @@ function findSymbolInFile(
   if (results.length > 0) return results;
 
   const declRegex = new RegExp(
-    `\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)\\s+(${escaped})\\b`,
+    `\\b([A-Za-z_][A-Za-z0-9_]*(?:\\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\\[\\])?\\s+(${escaped})\\b`,
     "g"
   );
   let declMatch: RegExpExecArray | null;
