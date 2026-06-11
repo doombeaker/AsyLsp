@@ -268,6 +268,7 @@ function arraysEqual(a: string[], b: string[]): boolean {
 
 documents.onDidClose((e) => {
   documentSettings.delete(e.document.uri);
+  localSymbolCache.delete(e.document.uri);
 });
 
 // ========== HOVER PROVIDER ==========
@@ -1192,7 +1193,13 @@ function shouldProvideCompletions(
   return true;
 }
 
-function getAllCompletions(document: TextDocument): CompletionItem[] {
+// Pre-built static completion items (never change — built once at startup)
+let cachedStaticCompletions: CompletionItem[] | null = null;
+const controlFlowLabelSet = new Set(controlFlowKeywords.map((k) => k.label));
+
+function getStaticCompletions(): CompletionItem[] {
+  if (cachedStaticCompletions) return cachedStaticCompletions;
+
   const items: CompletionItem[] = [];
 
   // Keywords (as snippets)
@@ -1206,9 +1213,9 @@ function getAllCompletions(document: TextDocument): CompletionItem[] {
     });
   }
 
-  // Other keywords
+  // Other keywords (skip ones already covered by controlFlowKeywords)
   for (const kw of keywords) {
-    if (!controlFlowKeywords.find((k) => k.label === kw)) {
+    if (!controlFlowLabelSet.has(kw)) {
       items.push({
         label: kw,
         kind: CompletionItemKind.Keyword,
@@ -1245,10 +1252,32 @@ function getAllCompletions(document: TextDocument): CompletionItem[] {
       insertTextFormat: InsertTextFormat.Snippet,
     });
   }
-  // Local symbols
-  items.push(...getLocalSymbolCompletions(document));
 
+  cachedStaticCompletions = items;
   return items;
+}
+
+// Cache local symbol completions per document version
+const localSymbolCache = new Map<string, { version: number; items: CompletionItem[] }>();
+
+function getAllCompletions(document: TextDocument): CompletionItem[] {
+  const staticItems = getStaticCompletions();
+
+  // Use cached local symbols if document version hasn't changed
+  const docKey = document.uri;
+  const docVersion = document.version;
+  const cached = localSymbolCache.get(docKey);
+
+  let localItems: CompletionItem[];
+  if (cached && cached.version === docVersion) {
+    localItems = cached.items;
+  } else {
+    localItems = getLocalSymbolCompletions(document);
+    localSymbolCache.set(docKey, { version: docVersion, items: localItems });
+  }
+
+  // Combine static + local (two-array concat is cheaper than rebuilding static every time)
+  return staticItems.concat(localItems);
 }
 
 function getMemberCompletions(document: TextDocument, text: string, offset: number): CompletionItem[] {
