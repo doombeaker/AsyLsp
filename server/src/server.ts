@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 import {
@@ -269,6 +270,7 @@ function arraysEqual(a: string[], b: string[]): boolean {
 documents.onDidClose((e) => {
   documentSettings.delete(e.document.uri);
   localSymbolCache.delete(e.document.uri);
+  importedSymbolCache.delete(e.document.uri);
 });
 
 // ========== HOVER PROVIDER ==========
@@ -1257,27 +1259,37 @@ function getStaticCompletions(): CompletionItem[] {
   return items;
 }
 
-// Cache local symbol completions per document version
 const localSymbolCache = new Map<string, { version: number; items: CompletionItem[] }>();
+const importedSymbolCache = new Map<string, { version: number; items: CompletionItem[] }>();
 
 function getAllCompletions(document: TextDocument): CompletionItem[] {
   const staticItems = getStaticCompletions();
-
-  // Use cached local symbols if document version hasn't changed
   const docKey = document.uri;
   const docVersion = document.version;
-  const cached = localSymbolCache.get(docKey);
 
+  const localCached = localSymbolCache.get(docKey);
   let localItems: CompletionItem[];
-  if (cached && cached.version === docVersion) {
-    localItems = cached.items;
+  if (localCached && localCached.version === docVersion) {
+    localItems = localCached.items;
   } else {
     localItems = getLocalSymbolCompletions(document);
     localSymbolCache.set(docKey, { version: docVersion, items: localItems });
   }
 
-  // Combine static + local (two-array concat is cheaper than rebuilding static every time)
-  return staticItems.concat(localItems);
+  const importCached = importedSymbolCache.get(docKey);
+  let importedItems: CompletionItem[];
+  if (importCached && importCached.version === docVersion) {
+    connection.console.log(`[getAllCompletions] import cache HIT (version=${docVersion})`);
+    importedItems = importCached.items;
+  } else {
+    connection.console.log(`[getAllCompletions] import cache MISS (version=${docVersion}), calling getImportedSymbolCompletions`);
+    importedItems = getImportedSymbolCompletions(document);
+    importedSymbolCache.set(docKey, { version: docVersion, items: importedItems });
+  }
+
+  const result = staticItems.concat(localItems).concat(importedItems);
+  connection.console.log(`[getAllCompletions] total items: static=${staticItems.length} local=${localItems.length} imported=${importedItems.length} → ${result.length}`);
+  return result;
 }
 
 function getMemberCompletions(document: TextDocument, text: string, offset: number): CompletionItem[] {
@@ -1472,15 +1484,20 @@ function resolveModuleFile(
     moduleName,
   ];
 
+  connection.console.log(`[resolveModule] searching "${moduleName}" in searchPath=[${searchPath.join(", ")}]`);
+  connection.console.log(`[resolveModule] candidates=[${candidates.join(", ")}]`);
+
   for (const dir of searchPath) {
     for (const candidate of candidates) {
       const fullPath = path.join(dir, candidate);
       if (fs.existsSync(fullPath)) {
+        connection.console.log(`[resolveModule] FOUND: ${fullPath}`);
         return fullPath;
       }
     }
   }
 
+  connection.console.log(`[resolveModule] NOT FOUND: "${moduleName}"`);
   return null;
 }
 
@@ -1771,6 +1788,78 @@ function expandPath(raw: string): string {
   return path.resolve(expanded);
 }
 
+let cachedSystemLibraryPath: string | null | undefined = undefined;
+
+function discoverAsyLibViaKpsewhich(): string | null {
+  try {
+    const texmfdist = execSync("kpsewhich -var-value=TEXMFDIST", {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    if (!texmfdist) return null;
+    const asyPath = path.join(texmfdist, "asymptote");
+    if (fs.existsSync(asyPath)) {
+      connection.console.log(`[discoverAsyLib] kpsewhich → ${asyPath}`);
+      return asyPath;
+    }
+  } catch {
+    connection.console.log("[discoverAsyLib] kpsewhich unavailable");
+  }
+  return null;
+}
+
+function discoverAsyLibViaTexliveScan(): string | null {
+  const texliveBase = "/usr/local/texlive";
+  if (!fs.existsSync(texliveBase)) return null;
+  try {
+    const years = fs.readdirSync(texliveBase, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name)
+      .sort()
+      .reverse();
+    for (const year of years) {
+      const candidate = path.join(texliveBase, year, "texmf-dist", "asymptote");
+      if (fs.existsSync(candidate)) {
+        connection.console.log(`[discoverAsyLib] texlive scan → ${candidate}`);
+        return candidate;
+      }
+    }
+  } catch {
+    connection.console.log("[discoverAsyLib] texlive scan failed");
+  }
+  return null;
+}
+
+function discoverAsyLibViaCommonPaths(): string | null {
+  const commonPaths = [
+    "/opt/homebrew/share/texmf-dist/asymptote",
+    "/usr/local/share/texmf-dist/asymptote",
+    "/usr/share/texmf-dist/asymptote",
+    "/usr/share/texlive/texmf-dist/asymptote",
+  ];
+  for (const p of commonPaths) {
+    if (fs.existsSync(p)) {
+      connection.console.log(`[discoverAsyLib] common path → ${p}`);
+      return p;
+    }
+  }
+  return null;
+}
+
+function getSystemLibraryPath(): string | null {
+  if (cachedSystemLibraryPath !== undefined) return cachedSystemLibraryPath;
+
+  cachedSystemLibraryPath =
+    discoverAsyLibViaKpsewhich() ??
+    discoverAsyLibViaTexliveScan() ??
+    discoverAsyLibViaCommonPaths();
+
+  if (!cachedSystemLibraryPath) {
+    connection.console.log("[discoverAsyLib] system library not found");
+  }
+  return cachedSystemLibraryPath;
+}
+
 function buildSearchPath(document: TextDocument): string[] {
   const paths: string[] = [];
 
@@ -1780,6 +1869,11 @@ function buildSearchPath(document: TextDocument): string[] {
 
   for (const sp of globalSettings.searchPaths) {
     paths.push(expandPath(sp));
+  }
+
+  const sysLib = getSystemLibraryPath();
+  if (sysLib) {
+    paths.push(sysLib);
   }
 
   const asyHome = process.env.ASYMPTOTE_HOME || path.join(os.homedir(), ".asy");
@@ -1960,6 +2054,99 @@ function getLocalSymbolCompletions(document: TextDocument): CompletionItem[] {
       kind: hasParams ? CompletionItemKind.Function : CompletionItemKind.Variable,
     });
   }
+  return items;
+}
+
+function extractModuleDeclarations(content: string, seen: Set<string>): CompletionItem[] {
+  const items: CompletionItem[] = [];
+
+  const structRegex = /struct\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = structRegex.exec(content)) !== null) {
+    const name = m[1];
+    if (!seen.has(name)) {
+      seen.add(name);
+      items.push({ label: name, kind: CompletionItemKind.Struct });
+    }
+  }
+
+  const declRegex = /\b([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)(?:\[\])?(?:\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)?)?\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;|=|\s*\()/g;
+  while ((m = declRegex.exec(content)) !== null) {
+    const name = m[2];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const hasParams = content[m.index + m[0].length - 1] === '(';
+    items.push({
+      label: name,
+      kind: hasParams ? CompletionItemKind.Function : CompletionItemKind.Variable,
+    });
+  }
+
+  return items;
+}
+
+function getImportedSymbolCompletions(document: TextDocument): CompletionItem[] {
+  const items: CompletionItem[] = [];
+  const seen = new Set<string>();
+
+  for (const kw of keywords) seen.add(kw);
+  for (const t of builtinTypes) seen.add(t.label);
+  for (const f of builtinFunctions) seen.add(f.label);
+  for (const c of constants) seen.add(c.label);
+
+  const importedModules = getDocumentImports(document);
+  connection.console.log(`[import-completion] imports detected: [${importedModules.join(", ")}]`);
+
+  for (const moduleName of importedModules) {
+    connection.console.log(`[import-completion] processing module: "${moduleName}"`);
+
+    const stdModule = standardLibraryModules.find(m => m.name === moduleName);
+    if (stdModule && stdModule.exports) {
+      connection.console.log(`[import-completion]   → stdlib exports: [${stdModule.exports.join(", ")}]`);
+      let added = 0;
+      for (const exp of stdModule.exports) {
+        if (!seen.has(exp)) {
+          seen.add(exp);
+          items.push({
+            label: exp,
+            kind: CompletionItemKind.Function,
+            detail: `${moduleName} module`,
+          });
+          added++;
+        }
+      }
+      connection.console.log(`[import-completion]   → added ${added} new symbols from exports`);
+      continue;
+    }
+
+    const moduleFile = resolveModuleFile(moduleName, document);
+    if (!moduleFile) {
+      connection.console.log(`[import-completion]   → resolveModuleFile returned null (file not found)`);
+      continue;
+    }
+    connection.console.log(`[import-completion]   → resolved file: ${moduleFile}`);
+
+    try {
+      const content = fs.readFileSync(moduleFile, "utf-8");
+      connection.console.log(`[import-completion]   → file size: ${content.length} chars`);
+      const decls = extractModuleDeclarations(content, seen);
+      connection.console.log(`[import-completion]   → extractModuleDeclarations returned ${decls.length} items: [${decls.map(d=>d.label).slice(0,20).join(", ")}${decls.length > 20 ? ", ..." : ""}]`);
+      let added = 0;
+      for (const d of decls) {
+        if (!seen.has(d.label)) {
+          seen.add(d.label);
+          d.detail = `${moduleName} module`;
+          items.push(d);
+          added++;
+        }
+      }
+      connection.console.log(`[import-completion]   → added ${added} new symbols (${decls.length - added} filtered as already seen)`);
+    } catch (e: any) {
+      connection.console.log(`[import-completion]   → read/parse error: ${e?.message || "unknown"}`);
+    }
+  }
+
+  connection.console.log(`[import-completion] total imported symbols: ${items.length}`);
   return items;
 }
 
