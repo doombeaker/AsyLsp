@@ -40,6 +40,8 @@ import {
   TextDocumentPositionParams,
   FoldingRange,
   FoldingRangeRequest,
+  Diagnostic,
+  DiagnosticSeverity,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
@@ -271,6 +273,12 @@ documents.onDidClose((e) => {
   documentSettings.delete(e.document.uri);
   localSymbolCache.delete(e.document.uri);
   importedSymbolCache.delete(e.document.uri);
+  const timer = diagnosticTimers.get(e.document.uri);
+  if (timer) {
+    clearTimeout(timer);
+    diagnosticTimers.delete(e.document.uri);
+  }
+  connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
 });
 
 // ========== HOVER PROVIDER ==========
@@ -972,6 +980,221 @@ connection.onRequest(FoldingRangeRequest.type, (params) => {
   }
 
   return ranges;
+});
+
+// ========== DIAGNOSTICS ==========
+
+const diagnosticTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function debounceDiagnostics(document: TextDocument): void {
+  const uri = document.uri;
+  const existing = diagnosticTimers.get(uri);
+  if (existing) clearTimeout(existing);
+  connection.console.log(`[diagnostics] debounce set (300ms) for ${path.basename(fileURLToPath(uri))}`);
+  diagnosticTimers.set(uri, setTimeout(() => {
+    diagnosticTimers.delete(uri);
+    const diags = validateDocument(document);
+    connection.console.log(`[diagnostics] publishing ${diags.length} diagnostics to client`);
+    connection.sendDiagnostics({ uri, diagnostics: diags });
+  }, 300));
+}
+
+function validateDocument(document: TextDocument): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  validateBrackets(document, diagnostics);
+  const bracketCount = diagnostics.length;
+  validateImports(document, diagnostics);
+  const importCount = diagnostics.length - bracketCount;
+  validateSemicolons(document, diagnostics);
+  const semicolonCount = diagnostics.length - bracketCount - importCount;
+  connection.console.log(`[diagnostics] validateDocument: brackets=${bracketCount} imports=${importCount} semicolons=${semicolonCount} total=${diagnostics.length}`);
+  return diagnostics;
+}
+
+function validateBrackets(document: TextDocument, diagnostics: Diagnostic[]): void {
+  const text = document.getText();
+  const stack: { char: string; offset: number }[] = [];
+  const pairs: Record<string, string> = { "{": "}", "(": ")", "[": "]" };
+  const reverse: Record<string, string> = { "}": "{", ")": "(", "]": "[" };
+  let openCount = 0;
+  let closeCount = 0;
+
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+
+    if (ch === '"' || ch === "'") {
+      const delim = ch;
+      i++;
+      while (i < text.length && text[i] !== delim) {
+        if (text[i] === "\\") i++;
+        if (i < text.length && text[i] === "\n") break;
+        i++;
+      }
+      if (i < text.length) i++;
+      continue;
+    }
+
+    if (ch === "/" && i + 1 < text.length) {
+      if (text[i + 1] === "/") {
+        while (i < text.length && text[i] !== "\n") i++;
+        continue;
+      }
+      if (text[i + 1] === "*") {
+        i += 2;
+        while (i + 1 < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+        i += 2;
+        continue;
+      }
+    }
+
+    if (pairs[ch]) {
+      stack.push({ char: ch, offset: i });
+      openCount++;
+    } else if (reverse[ch]) {
+      closeCount++;
+      if (stack.length === 0 || pairs[stack[stack.length - 1].char] !== ch) {
+        const pos = document.positionAt(i);
+        diagnostics.push({
+          severity: DiagnosticSeverity.Error,
+          range: { start: pos, end: { line: pos.line, character: pos.character + 1 } },
+          message: stack.length === 0
+            ? `Extra '${ch}' — no matching opening bracket`
+            : `Mismatched '${ch}' — expected '${pairs[stack[stack.length - 1].char]}'`,
+          source: "asymptote",
+        });
+      } else {
+        stack.pop();
+      }
+    }
+
+    i++;
+  }
+
+  for (const item of stack) {
+    const pos = document.positionAt(item.offset);
+    diagnostics.push({
+      severity: DiagnosticSeverity.Error,
+      range: { start: pos, end: { line: pos.line, character: pos.character + 1 } },
+      message: `Unclosed '${item.char}' (line ${pos.line + 1}) — missing '${pairs[item.char]}'?`,
+      source: "asymptote",
+    });
+  }
+
+  connection.console.log(
+    `[diagnostics] brackets: text=${text.length}chars scanned=${openCount + closeCount} ` +
+    `(open=${openCount} close=${closeCount}) unmatched=${stack.length} mismatches=${diagnostics.length - stack.length}`
+  );
+}
+
+function validateImports(document: TextDocument, diagnostics: Diagnostic[]): void {
+  const text = document.getText();
+  const importRegex = /^(?:import|access)\s+([A-Za-z_][A-Za-z0-9_.]*)\b/gm;
+  const fromRegex = /^from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+access\b/gm;
+
+  for (const regex of [importRegex, fromRegex]) {
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      const moduleName = match[1];
+      const moduleFile = resolveModuleFile(moduleName, document);
+      if (!moduleFile) {
+        const nameOffset = match.index + match[0].indexOf(moduleName);
+        const pos = document.positionAt(nameOffset);
+        diagnostics.push({
+          severity: DiagnosticSeverity.Warning,
+          range: {
+            start: pos,
+            end: { line: pos.line, character: pos.character + moduleName.length },
+          },
+          message: `Module '${moduleName}' not found in search path`,
+          source: "asymptote",
+        });
+      }
+    }
+  }
+}
+
+function validateSemicolons(document: TextDocument, diagnostics: Diagnostic[]): void {
+  const text = document.getText();
+  const lines = text.split("\n");
+  const commentLines = getCommentLineSet(text);
+
+  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+    if (commentLines.has(lineNum)) continue;
+
+    const line = lines[lineNum];
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    if (trimmed === "{" || trimmed === "}") continue;
+
+    const lastChar = trimmed.charAt(trimmed.length - 1);
+    if (lastChar === ";" || lastChar === "{" || lastChar === "}" || lastChar === "\\" || lastChar === ",") continue;
+
+    if (/^[A-Za-z_][\w\s*\[\]<>]*\s+[A-Za-z_]\w*\s*\([^)]*\)\s*$/.test(trimmed)) continue;
+
+    diagnostics.push({
+      severity: DiagnosticSeverity.Information,
+      range: {
+        start: { line: lineNum, character: Math.max(0, line.length - 1) },
+        end: { line: lineNum, character: line.length },
+      },
+      message: "Missing semicolon? (optional in Asymptote, add ';' if intended)",
+      source: "asymptote",
+    });
+  }
+}
+
+function getCommentLineSet(text: string): Set<number> {
+  const commentLines = new Set<number>();
+  let i = 0;
+  let lineNum = 0;
+
+  while (i < text.length) {
+    if (text[i] === "\n") { lineNum++; i++; continue; }
+
+    if (text[i] === '"' || text[i] === "'") {
+      const delim = text[i];
+      i++;
+      while (i < text.length && text[i] !== delim) {
+        if (text[i] === "\\") i++;
+        if (i < text.length && text[i] === "\n") lineNum++;
+        i++;
+      }
+      if (i < text.length) i++;
+      continue;
+    }
+
+    if (text[i] === "/" && i + 1 < text.length) {
+      if (text[i + 1] === "/") {
+        commentLines.add(lineNum);
+        while (i < text.length && text[i] !== "\n") i++;
+        continue;
+      }
+      if (text[i + 1] === "*") {
+        const startLine = lineNum;
+        i += 2;
+        while (i + 1 < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+          if (text[i] === "\n") lineNum++;
+          i++;
+        }
+        i += 2;
+        for (let l = startLine; l <= lineNum; l++) commentLines.add(l);
+        continue;
+      }
+    }
+
+    i++;
+  }
+
+  return commentLines;
+}
+
+documents.onDidOpen((e) => {
+  debounceDiagnostics(e.document);
+});
+
+documents.onDidChangeContent((e) => {
+  debounceDiagnostics(e.document);
 });
 
 // Make the text document manager listen on the connection
