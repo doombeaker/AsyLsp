@@ -2,6 +2,9 @@
 
 LSP-based VS Code extension for the [Asymptote](https://asymptote.sourceforge.io/) vector graphics language (`.asy`).
 
+> **Repository:** [github.com/doombeaker/AsyLsp](https://github.com/doombeaker/AsyLsp)  
+> Found a bug? Have a feature request? [Open an issue](https://github.com/doombeaker/AsyLsp/issues) — feedback is welcome!
+
 ## Features
 
 ### Syntax Highlighting
