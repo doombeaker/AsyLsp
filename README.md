@@ -170,6 +170,98 @@ The extension resolves `import`/`include`/`access` paths in this order:
 
 All `plain_*.asy` files found in search paths are automatically indexed as implicit imports (matching `private import plain;` behavior).
 
+## Usage with Neovim
+
+The Asymptote Language Server (`server/`) is editor-agnostic and can be used with any LSP-compatible editor. Below is the configuration for [Neovim](https://neovim.io/) using [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig).
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) >= 18
+- [Neovim](https://neovim.io/) >= 0.10
+- [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig) plugin installed
+
+### Build the Language Server
+
+```bash
+cd /path/to/AsyLsp/server
+npm install && npm run compile
+```
+
+The server entry point is `server/out/server.js`.
+
+### Configuration
+
+Add the following to your Neovim configuration (e.g., `~/.config/nvim/lua/configs/lspconfig.lua`):
+
+```lua
+local lspconfig = require("lspconfig")
+local configs = require("lspconfig.configs")
+
+-- Define a custom LSP server for Asymptote
+if not configs.asymptote then
+  configs.asymptote = {
+    default_config = {
+      cmd = { "node", "/path/to/AsyLsp/server/out/server.js", "--stdio" },
+      filetypes = { "asy" },
+      root_dir = lspconfig.util.find_git_ancestor,
+      single_file_support = true,
+      settings = {
+        asymptote = {
+          asyPath = "asy",
+          searchPaths = {},
+          autoimport = { "three" },
+        },
+      },
+    },
+  }
+end
+
+lspconfig.asymptote.setup({})
+```
+
+> **Note:** Replace `/path/to/AsyLsp` with the actual path where you cloned this repository.
+
+### Filetype Detection
+
+Ensure Neovim recognizes `.asy` files. You can add this to your configuration:
+
+```lua
+vim.filetype.add({
+  extension = {
+    asy = "asy",
+  },
+})
+```
+
+Or manually in a file (e.g., `~/.config/nvim/ftdetect/asy.vim`):
+
+```vim
+au BufRead,BufNewFile *.asy set filetype=asy
+```
+
+### Available Features in Neovim
+
+Once configured, the following LSP features are available in Neovim for `.asy` files:
+
+| Feature | Neovim Command / Keymap |
+|---|---|
+| **Go to Definition** | `gd` or `:lua vim.lsp.buf.definition()` |
+| **Find References** | `gr` or `:lua vim.lsp.buf.references()` |
+| **Rename Symbol** | `<leader>rn` or `:lua vim.lsp.buf.rename()` |
+| **Hover Documentation** | `K` or `:lua vim.lsp.buf.hover()` |
+| **Code Completion** | Built-in via `vim.lsp.completion` or `nvim-cmp` |
+| **Diagnostics** | Shown in `:lua vim.diagnostic.open_float()` |
+| **Signature Help** | `:lua vim.lsp.buf.signature_help()` |
+
+### Other Editors
+
+Because the language server implements the standard [Language Server Protocol](https://microsoft.github.io/language-server-protocol/), it can also be used with:
+
+- **Vim** — via [vim-lsp](https://github.com/prabirshrestha/vim-lsp) or [coc.nvim](https://github.com/neoclide/coc.nvim)
+- **Emacs** — via [lsp-mode](https://github.com/emacs-lsp/lsp-mode) or [Eglot](https://github.com/joaotavora/eglot)
+- **Sublime Text** — via [LSP](https://github.com/sublimelsp/LSP) package
+- **Helix** — via `languages.toml` configuration
+
 ## Development
 
 ### Prerequisites
