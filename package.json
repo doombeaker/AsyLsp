@@ -101,6 +101,14 @@
           "default": [],
           "description": "Additional search paths for resolving import/include/access statements. Directories are searched in order. Supports ~ for home directory and environment variable expansion."
         },
+        "asymptote.autoimport": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Modules to automatically import in all Asymptote files (equivalent to the autoimport setting in Asymptote config). These modules are treated as implicitly imported for language server features like completion, hover, and go-to-definition."
+        },
         "asymptote.formatting.braceStyle": {
           "type": "string",
           "enum": [

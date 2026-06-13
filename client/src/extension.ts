@@ -59,6 +59,7 @@ export function activate(context: ExtensionContext) {
     initializationOptions: {
       asyPath: workspace.getConfiguration("asymptote").get("asyPath", "asy"),
       searchPaths: workspace.getConfiguration("asymptote").get<string[]>("searchPaths", []),
+      autoimport: workspace.getConfiguration("asymptote").get<string[]>("autoimport", []),
       formatting: {
         braceStyle: workspace
           .getConfiguration("asymptote.formatting")

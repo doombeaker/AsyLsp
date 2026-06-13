@@ -77,6 +77,7 @@ let workspaceFolders: string[] = [];
 interface AsymptoteSettings {
   asyPath: string;
   searchPaths: string[];
+  autoimport: string[];
   formatting: {
     braceStyle: "kr" | "allman";
     indentSize: number;
@@ -88,6 +89,7 @@ interface AsymptoteSettings {
 const defaultSettings: AsymptoteSettings = {
   asyPath: "asy",
   searchPaths: [],
+  autoimport: [],
   formatting: {
     braceStyle: "kr",
     indentSize: 2,
@@ -144,6 +146,9 @@ connection.onInitialize((params: InitializeParams) => {
     }
     if (initOptions.searchPaths !== undefined) {
       globalSettings.searchPaths = initOptions.searchPaths;
+    }
+    if (initOptions.autoimport !== undefined) {
+      globalSettings.autoimport = initOptions.autoimport;
     }
     if (initOptions.formatting) {
       Object.assign(globalSettings.formatting, initOptions.formatting);
@@ -232,6 +237,11 @@ connection.onDidChangeConfiguration((change) => {
     cachedSearchPathHash = "";
     cachedPlainHash = "";
   }
+  if (asySettings.autoimport !== undefined) {
+    globalSettings.autoimport = asySettings.autoimport;
+    cachedSearchPathHash = "";
+    cachedPlainHash = "";
+  }
   if (asySettings.asyPath !== undefined) {
     globalSettings.asyPath = asySettings.asyPath;
   }
@@ -251,6 +261,12 @@ async function refreshGlobalSettings(): Promise<void> {
     let changed = false;
     if (s.searchPaths !== undefined && !arraysEqual(s.searchPaths, globalSettings.searchPaths)) {
       globalSettings.searchPaths = s.searchPaths;
+      cachedSearchPathHash = "";
+      cachedPlainHash = "";
+      changed = true;
+    }
+    if (s.autoimport !== undefined && !arraysEqual(s.autoimport, globalSettings.autoimport)) {
+      globalSettings.autoimport = s.autoimport;
       cachedSearchPathHash = "";
       cachedPlainHash = "";
       changed = true;
@@ -1738,6 +1754,10 @@ function getDocumentImports(document: TextDocument): string[] {
   modules.add("plain");
   for (const m of scanPlainModules(document)) {
     modules.add(m);
+  }
+
+  for (const m of globalSettings.autoimport) {
+    if (m) modules.add(m);
   }
 
   return Array.from(modules);
