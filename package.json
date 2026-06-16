@@ -2,7 +2,7 @@
   "name": "asymptote-lsp",
   "displayName": "Asymptote Language Support",
   "description": "LSP-based Asymptote language support with syntax highlighting, code completion for imported modules, real-time diagnostics, hover, go-to-definition, cross-module references, rename, formatting, and compile/preview",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "publisher": "asy",
   "license": "MIT",
   "icon": "logo.png",
@@ -38,6 +38,21 @@
         "command": "asymptote.preview",
         "title": "Asymptote: Preview",
         "icon": "$(open-preview)"
+      },
+      {
+        "command": "asymptote.setFormat.svg",
+        "title": "SVG",
+        "icon": "$(file-media)"
+      },
+      {
+        "command": "asymptote.setFormat.pdf",
+        "title": "PDF",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "asymptote.setFormat.png",
+        "title": "PNG",
+        "icon": "$(file-media)"
       }
     ],
     "menus": {
@@ -45,15 +60,41 @@
         {
           "command": "asymptote.compile",
           "when": "editorLangId == asymptote",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "asymptote.preview",
           "when": "editorLangId == asymptote",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "submenu": "asymptote.formatMenu",
+          "when": "editorLangId == asymptote",
+          "group": "navigation@3"
+        }
+      ],
+      "asymptote.formatMenu": [
+        {
+          "command": "asymptote.setFormat.svg",
+          "group": "inline"
+        },
+        {
+          "command": "asymptote.setFormat.pdf",
+          "group": "inline"
+        },
+        {
+          "command": "asymptote.setFormat.png",
+          "group": "inline"
         }
       ]
     },
+    "submenus": [
+      {
+        "id": "asymptote.formatMenu",
+        "label": "Format",
+        "icon": "$(file-media)"
+      }
+    ],
     "languages": [
       {
         "id": "asymptote",
