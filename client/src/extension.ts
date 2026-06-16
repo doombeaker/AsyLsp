@@ -34,6 +34,9 @@ statusBarItem.command = "asymptote.preview";
 statusBarItem.text = "$(output) Asymptote";
 statusBarItem.tooltip = "Asymptote: Compile (click to preview)";
 
+const formatStatusBarItem = window.createStatusBarItem(StatusBarAlignment.Right, 99);
+formatStatusBarItem.command = "asymptote.showFormatPicker";
+
 export function activate(context: ExtensionContext) {
   // === LSP Server ===
   const serverModule = context.asAbsolutePath(
@@ -86,6 +89,7 @@ export function activate(context: ExtensionContext) {
 
   client.start();
   statusBarItem.show();
+  formatStatusBarItem.show();
 
   // === Compile Command ===
   context.subscriptions.push(
@@ -106,6 +110,28 @@ export function activate(context: ExtensionContext) {
     })
 );
 
+  context.subscriptions.push(
+    commands.registerCommand("asymptote.setFormat.svg", () => setOutputFormat("svg"))
+  );
+  context.subscriptions.push(
+    commands.registerCommand("asymptote.setFormat.pdf", () => setOutputFormat("pdf"))
+  );
+  context.subscriptions.push(
+    commands.registerCommand("asymptote.setFormat.png", () => setOutputFormat("png"))
+  );
+  context.subscriptions.push(
+    commands.registerCommand("asymptote.showFormatPicker", () => showFormatPicker())
+  );
+
+  context.subscriptions.push(
+    workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("asymptote.compile.outputFormat")) {
+        updateStatusBar();
+      }
+    })
+  );
+
+  updateStatusBar();
   initializeSemanticColors();
 }
 
@@ -149,6 +175,30 @@ function getAsyPath(): string {
 
 function getOutputFormat(): string {
   return workspace.getConfiguration("asymptote.compile").get("outputFormat", "svg");
+}
+
+function setOutputFormat(format: string): void {
+  workspace.getConfiguration("asymptote.compile").update("outputFormat", format, true);
+  window.showInformationMessage(`Output format set to ${format.toUpperCase()}`);
+  updateStatusBar();
+}
+
+function updateStatusBar(): void {
+  const format = getOutputFormat().toUpperCase();
+  formatStatusBarItem.text = `$(file-media) ${format}`;
+  formatStatusBarItem.tooltip = `Output format: ${format} (click to change)`;
+}
+
+async function showFormatPicker(): Promise<void> {
+  const items = [
+    { label: "SVG", description: "Scalable Vector Graphics (recommended for preview)", picked: getOutputFormat() === "svg" },
+    { label: "PDF", description: "Portable Document Format", picked: getOutputFormat() === "pdf" },
+    { label: "PNG", description: "Portable Network Graphics", picked: getOutputFormat() === "png" },
+  ];
+  const selected = await window.showQuickPick(items, { placeHolder: "Select output format" });
+  if (selected) {
+    setOutputFormat(selected.label.toLowerCase());
+  }
 }
 
 function getOutputDir(sourceDir: string): string {
